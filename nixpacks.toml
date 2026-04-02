@@ -1,21 +1,2 @@
 [phases.setup]
 aptPkgs = ["texlive-latex-base", "texlive-latex-extra", "texlive-fonts-recommended", "texlive-latex-recommended"]
-```
-
----
-
-**`.python-version`**
-```
-3.11
-```
-
----
-
-**`.gitignore`**
-```
-__pycache__/
-*.pyc
-.env
-venv/
-.venv/
-.DS_Store
