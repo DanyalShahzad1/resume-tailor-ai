@@ -4,6 +4,7 @@ import tempfile
 import shutil
 import json
 import re
+import base64
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
@@ -12,6 +13,59 @@ import httpx
 app = FastAPI()
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+
+
+def extract_text_from_pdf_base64(b64_data: str) -> str:
+    """Extract text from a base64-encoded PDF using pdftotext."""
+    tmpdir = tempfile.mkdtemp()
+    pdf_path = os.path.join(tmpdir, "input.pdf")
+    txt_path = os.path.join(tmpdir, "input.txt")
+
+    with open(pdf_path, "wb") as f:
+        f.write(base64.b64decode(b64_data))
+
+    # Try pdftotext first (from poppler-utils)
+    try:
+        subprocess.run(
+            ["pdftotext", "-layout", pdf_path, txt_path],
+            capture_output=True, text=True, timeout=15,
+        )
+        if os.path.exists(txt_path):
+            with open(txt_path, "r", encoding="utf-8", errors="ignore") as f:
+                text = f.read().strip()
+            if text:
+                shutil.rmtree(tmpdir, ignore_errors=True)
+                return text
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # Fallback: use Python's PyPDF2 if available
+    try:
+        import PyPDF2
+        with open(pdf_path, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            text = "\n".join(page.extract_text() or "" for page in reader.pages)
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        return text.strip()
+    except ImportError:
+        pass
+
+    shutil.rmtree(tmpdir, ignore_errors=True)
+    return ""
+
+
+def process_resume_text(raw_text: str) -> str:
+    """If the resume text is a PDF base64 blob, extract text. Otherwise return as-is."""
+    if raw_text.startswith("[PDF_BASE64]:"):
+        b64_data = raw_text[len("[PDF_BASE64]:"):]
+        extracted = extract_text_from_pdf_base64(b64_data)
+        if not extracted:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not extract text from the PDF. Please upload your resume as a .tex or .txt file instead.",
+            )
+        return extracted
+    return raw_text
 
 LATEX_TEMPLATE = r"""
 \documentclass[10pt,letterpaper]{article}
@@ -125,6 +179,8 @@ async def tailor_resume(
 
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server.")
+
+    resume_text = process_resume_text(resume_text)
 
     system_prompt = """You are an expert resume writer and career consultant. Your job is to tailor a candidate's resume to a specific job description.
 
@@ -243,6 +299,8 @@ async def tailor_resume_json(
 
     if not ANTHROPIC_API_KEY:
         raise HTTPException(status_code=500, detail="ANTHROPIC_API_KEY not configured on server.")
+
+    resume_text = process_resume_text(resume_text)
 
     system_prompt = """You are an expert resume writer and career consultant. Your job is to tailor a candidate's resume to a specific job description.
 
