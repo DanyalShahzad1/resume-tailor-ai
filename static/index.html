@@ -668,7 +668,25 @@
 
     try {
       const resp = await fetch('/api/tailor-json', { method: 'POST', body: formData });
-      const data = await resp.json();
+
+      let data;
+      try {
+        data = await resp.json();
+      } catch (parseErr) {
+        const text = await resp.text().catch(() => 'No response body');
+        showStatus('error', 'Server returned invalid response (status ' + resp.status + '): ' + text.substring(0, 200));
+        btnForge.classList.remove('loading');
+        updateBtn();
+        return;
+      }
+
+      // Handle FastAPI HTTPException format ({"detail": "..."})
+      if (!resp.ok && data.detail) {
+        showStatus('error', 'Error: ' + data.detail);
+        btnForge.classList.remove('loading');
+        updateBtn();
+        return;
+      }
 
       if (data.success && data.pdf_base64) {
         // Convert base64 to blob
