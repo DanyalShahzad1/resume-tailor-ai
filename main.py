@@ -111,8 +111,14 @@ YOUR APPROACH:
 - You CAN rephrase entire sentences — just keep the same underlying facts, metrics, and experiences.
 - Weave in keywords and terminology from the job description naturally where the candidate has genuine experience.
 - Reorder bullet points WITHIN each role to put the most job-relevant ones first.
-- In Technical Skills, reorder tools to put job-relevant ones first, and add any job-mentioned tools the candidate actually knows.
-- Keep each bullet approximately the same length as the original (do not make them significantly longer or shorter).
+- In Technical Skills, reorder tools to put job-relevant ones first.
+
+LENGTH RULES (CRITICAL — violating these ruins the resume):
+- Each reworded bullet MUST be the SAME length or SHORTER than the original bullet. NEVER make a bullet longer.
+- If the original bullet is 1 line, the new bullet must be 1 line.
+- If the original bullet is 2 lines, the new bullet must be 2 lines or less.
+- The total resume MUST fit on exactly ONE page. The original already fits on one page, so if you keep bullets the same length or shorter, it will still fit.
+- Do NOT add extra words, clauses, or detail that would make bullets longer than the originals.
 
 CHRONOLOGICAL ORDER (CRITICAL):
 - Within each section, roles MUST be in reverse chronological order (most recent date first).
