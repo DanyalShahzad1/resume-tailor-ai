@@ -1,2 +1,2 @@
 [phases.setup]
-aptPkgs = ["texlive-latex-base", "texlive-latex-extra", "texlive-fonts-recommended", "texlive-latex-recommended"]
+aptPkgs = ["texlive-latex-base", "texlive-latex-extra", "texlive-fonts-recommended", "texlive-latex-recommended", "poppler-utils"]
