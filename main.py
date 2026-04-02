@@ -126,12 +126,22 @@ ESCAPING RULES (CRITICAL - follow exactly):
 - Hash: \#
 - Underscore in URLs is fine inside \href{}
 
+PAGE DENSITY RULES (VERY IMPORTANT):
+- The resume MUST fill the ENTIRE single page with NO large blank space at the bottom.
+- Use 4-5 bullet points per major role (the most relevant roles to the job).
+- Use 2-3 bullet points per minor role.
+- Each bullet should be 1.5 to 2 full lines long — substantial and detailed, not short fragments.
+- Include ALL sections from the original resume: Education, Experience, Projects & Leadership, Athletics, Technical Skills.
+- Keep the Athletics section with 1 bullet.
+- For Technical Skills, include both categories with full detail.
+- If there is still space, expand bullet points with more specific metrics, tools, or outcomes.
+- The goal is a DENSE, professional, fully-filled single page — not a half-empty page.
+
 CONTENT RULES:
-- Resume MUST fit ONE page. Max 3-4 bullets per role, 1-2 lines each.
-- Keep facts truthful. Never invent experience.
-- Integrate job description keywords where the candidate has real experience.
-- Front-load most relevant experience.
-- Athletics: 1 bullet max or remove if irrelevant.
+- Keep ALL facts truthful. Never invent experience, companies, dates, or degrees.
+- Integrate job description keywords naturally where the candidate has real experience.
+- Reorder sections and bullets to front-load the most relevant experience.
+- Make bullet points action-oriented with specific metrics and outcomes.
 """
 
 
