@@ -5,7 +5,7 @@ import shutil
 import json
 import re
 import base64
-from fastapi import FastAPI, Form, HTTPException
+from fastapi import FastAPI, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 import httpx
@@ -16,20 +16,14 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 
 def extract_text_from_pdf_base64(b64_data: str) -> str:
-    """Extract text from a base64-encoded PDF using pdftotext or PyPDF2."""
     tmpdir = tempfile.mkdtemp()
     pdf_path = os.path.join(tmpdir, "input.pdf")
     txt_path = os.path.join(tmpdir, "input.txt")
-
     with open(pdf_path, "wb") as f:
         f.write(base64.b64decode(b64_data))
-
-    # Try pdftotext first (from poppler-utils)
     try:
-        subprocess.run(
-            ["pdftotext", "-layout", pdf_path, txt_path],
-            capture_output=True, text=True, timeout=15,
-        )
+        subprocess.run(["pdftotext", "-layout", pdf_path, txt_path],
+                       capture_output=True, text=True, timeout=15)
         if os.path.exists(txt_path):
             with open(txt_path, "r", encoding="utf-8", errors="ignore") as f:
                 text = f.read().strip()
@@ -38,8 +32,6 @@ def extract_text_from_pdf_base64(b64_data: str) -> str:
                 return text
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
-
-    # Fallback: PyPDF2
     try:
         import PyPDF2
         with open(pdf_path, "rb") as f:
@@ -49,18 +41,16 @@ def extract_text_from_pdf_base64(b64_data: str) -> str:
         return text.strip()
     except Exception:
         pass
-
     shutil.rmtree(tmpdir, ignore_errors=True)
     return ""
 
 
 def process_resume_text(raw_text: str) -> str:
-    """If the resume text is a PDF base64 blob, extract text. Otherwise return as-is."""
     if raw_text.startswith("[PDF_BASE64]:"):
         b64_data = raw_text[len("[PDF_BASE64]:"):]
         extracted = extract_text_from_pdf_base64(b64_data)
         if not extracted:
-            raise ValueError("Could not extract text from the PDF. Please upload your resume as a .tex or .txt file instead.")
+            raise ValueError("Could not extract text from PDF. Upload as .tex or .txt instead.")
         return extracted
     return raw_text
 
@@ -112,43 +102,40 @@ LATEX_TEMPLATE = r"""
 \end{document}
 """
 
-SYSTEM_PROMPT = r"""You are an expert resume writer and career consultant. Your job is to tailor a candidate's resume to a specific job description.
+SYSTEM_PROMPT = r"""You are an expert resume writer who outputs compilable LaTeX. Tailor a candidate's resume to a job description.
 
-CRITICAL RULES:
-1. Output ONLY valid LaTeX code for the BODY of the resume (everything between \begin{document}/\header and \end{document}). Do NOT include the preamble, \documentclass, \usepackage, \header command definition, \begin{document}, or \end{document}.
-2. The resume MUST fit on exactly ONE page. Be concise. Use tight bullet points (1-2 lines each). Limit to 3-4 bullets per role. Cut less relevant roles or reduce their bullets.
-3. Keep ALL facts truthful — do NOT invent experience, companies, dates, or degrees. Only rephrase/reorder/emphasize existing content.
-4. Integrate keywords and phrases from the job description naturally into bullet points where the candidate genuinely has that experience.
-5. Reorder sections and bullet points to front-load the most relevant experience for the target job.
-6. You may adjust bullet wording to better align with the job, but never fabricate achievements or metrics.
-7. Keep the Athletics section short (1 bullet max) or remove it if space is tight and it's not relevant.
-8. For Technical Skills, reorder and emphasize tools/skills mentioned in the job description.
-
-AVAILABLE LATEX COMMANDS (use these exactly):
-- \section{Section Title} — for section headers
-- \role{Title | Company}{Date Range}{Location}{Optional GPA or detail} — first role in a section
-- \nextrole{Title | Company}{Date Range}{Location}{Optional detail} — subsequent roles in same section
-- \begin{highlights} ... \end{highlights} — bullet list environment
-- \item — each bullet point inside highlights
-- For the Technical Skills section, use \textbf{Category:} text\\[2pt] format
-
-Also output a JSON block BEFORE the LaTeX with the candidate's name and contact line, formatted as:
+CRITICAL OUTPUT FORMAT:
+1. First output a JSON block with name and contact info:
 ```json
-{
-  "name": "Full Name",
-  "contact_line": "phone \\,|\\, \\href{mailto:email}{email} \\,|\\, \\href{url}{url}"
-}
+{"name": "Full Name", "contact_line": "phone \\,|\\, \\href{mailto:email}{email} \\,|\\, \\href{url}{url}"}
 ```
 
-Make sure to properly escape LaTeX special characters: $, %, &, #, _ in text content.
-The $ sign in dollar amounts should be escaped as \$.
-The & in company names should be escaped as \&.
-The % sign should be escaped as \%.
+2. Then output ONLY the LaTeX BODY content. Do NOT include \documentclass, \usepackage, \begin{document}, \end{document}, or \header.
+
+LATEX COMMANDS TO USE:
+- \section{Title}
+- \role{Title | Company}{Dates}{Location}{Detail}  (first entry in section)
+- \nextrole{Title | Company}{Dates}{Location}{Detail}  (subsequent entries)
+- \begin{highlights} \item bullet text \end{highlights}
+- \textbf{Category:} text\\[2pt]  (for Technical Skills)
+
+ESCAPING RULES (CRITICAL - follow exactly):
+- Dollar amounts: \$20M  (backslash before $)
+- Ampersand in names: FP\&A, SG\&A  (backslash before &)
+- Percent sign: 15\%  (backslash before %)
+- Hash: \#
+- Underscore in URLs is fine inside \href{}
+
+CONTENT RULES:
+- Resume MUST fit ONE page. Max 3-4 bullets per role, 1-2 lines each.
+- Keep facts truthful. Never invent experience.
+- Integrate job description keywords where the candidate has real experience.
+- Front-load most relevant experience.
+- Athletics: 1 bullet max or remove if irrelevant.
 """
 
 
 async def call_claude(system_prompt: str, user_message: str) -> str:
-    """Call Claude API to tailor the resume."""
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
             "https://api.anthropic.com/v1/messages",
@@ -165,44 +152,36 @@ async def call_claude(system_prompt: str, user_message: str) -> str:
             },
         )
         if response.status_code != 200:
-            raise Exception(f"Claude API error (status {response.status_code}): {response.text[:500]}")
+            raise Exception(f"Claude API error ({response.status_code}): {response.text[:500]}")
         data = response.json()
         return data["content"][0]["text"]
 
 
 def compile_latex(latex_code: str) -> str:
-    """Compile LaTeX to PDF, return path to PDF file."""
     tmpdir = tempfile.mkdtemp()
     tex_path = os.path.join(tmpdir, "resume.tex")
     pdf_path = os.path.join(tmpdir, "resume.pdf")
-
     with open(tex_path, "w", encoding="utf-8") as f:
         f.write(latex_code)
-
     for _ in range(2):
         subprocess.run(
             ["pdflatex", "-interaction=nonstopmode", "-output-directory", tmpdir, tex_path],
             capture_output=True, text=True, timeout=30,
         )
-
     if not os.path.exists(pdf_path):
         log_path = os.path.join(tmpdir, "resume.log")
         log_content = ""
         if os.path.exists(log_path):
             with open(log_path, "r") as f:
                 log_content = f.read()[-2000:]
-        raise Exception(f"LaTeX compilation failed. Log tail:\n{log_content}")
-
+        raise Exception(f"LaTeX compilation failed. Log:\n{log_content}")
     return pdf_path
 
 
 def parse_claude_response(claude_response: str):
-    """Parse Claude's response to extract metadata and LaTeX body."""
-    # Parse JSON metadata
     json_match = re.search(r"```json\s*(\{.*?\})\s*```", claude_response, re.DOTALL)
     if not json_match:
         json_match = re.search(r'\{\s*"name".*?\}', claude_response, re.DOTALL)
-
     name = "Candidate Name"
     contact_line = ""
     if json_match:
@@ -213,23 +192,56 @@ def parse_claude_response(claude_response: str):
             contact_line = metadata.get("contact_line", contact_line)
         except json.JSONDecodeError:
             pass
-
-    # Extract LaTeX body — everything after the JSON block
     latex_body = claude_response
     if json_match:
         end_pos = json_match.end()
         remaining = claude_response[end_pos:]
-        # Skip past closing ``` if present
         remaining = re.sub(r"^\s*```", "", remaining)
         latex_body = remaining.strip()
-
-    # Remove any code fences
     latex_body = re.sub(r"```latex\s*", "", latex_body)
     latex_body = re.sub(r"```\s*$", "", latex_body)
     latex_body = re.sub(r"^```\s*", "", latex_body)
-    latex_body = latex_body.strip()
+    return name, contact_line, latex_body.strip()
 
-    return name, contact_line, latex_body
+
+def sanitize_latex(body: str) -> str:
+    """Fix common LaTeX issues from AI-generated content."""
+    # Remove preamble lines Claude might accidentally include
+    body = re.sub(r"\\begin\{document\}", "", body)
+    body = re.sub(r"\\end\{document\}", "", body)
+    body = re.sub(r"\\documentclass.*\n?", "", body)
+    body = re.sub(r"\\usepackage.*\n?", "", body)
+    body = re.sub(r"^\\header\s*$", "", body, flags=re.MULTILINE)
+
+    # Fix unescaped $ before digits (dollar amounts like $20M)
+    body = re.sub(r'(?<!\\)\$(\d)', r'\\$\1', body)
+
+    # Fix unescaped % (but not already escaped)
+    body = re.sub(r'(?<!\\)%', r'\\%', body)
+
+    # Fix unescaped & inside \item lines (company names like FP&A)
+    lines = body.split("\n")
+    fixed = []
+    for line in lines:
+        if line.strip().startswith("\\item"):
+            # Escape & that isn't already escaped
+            line = re.sub(r'(?<!\\)&', r'\\&', line)
+        fixed.append(line)
+    body = "\n".join(fixed)
+
+    # Fix double escapes that might result
+    body = body.replace("\\\\&", "\\&")
+    body = body.replace("\\\\%", "\\%")
+    body = re.sub(r'\\\\\$(\d)', r'\\$\1', body)
+
+    return body
+
+
+def build_full_latex(name: str, contact_line: str, body: str) -> str:
+    full = LATEX_TEMPLATE.replace("<<NAME>>", name)
+    full = full.replace("<<CONTACT_LINE>>", contact_line)
+    full = full.replace("<<BODY>>", body)
+    return full
 
 
 @app.post("/api/tailor-json")
@@ -237,7 +249,6 @@ async def tailor_resume_json(
     resume_text: str = Form(...),
     job_description: str = Form(...),
 ):
-    """Tailor resume and return JSON with PDF base64 and LaTeX source."""
     try:
         if not ANTHROPIC_API_KEY:
             return JSONResponse(content={
@@ -245,41 +256,58 @@ async def tailor_resume_json(
                 "error": "ANTHROPIC_API_KEY not configured. Add it in Railway Variables."
             })
 
-        # Extract text from PDF if needed
         resume_text = process_resume_text(resume_text)
 
-        user_message = f"""Here is the candidate's current resume content:
+        user_message = f"""Here is the candidate's current resume:
 
 ---RESUME START---
 {resume_text}
 ---RESUME END---
 
-Here is the job description to tailor the resume for:
+Here is the target job description:
 
 ---JOB DESCRIPTION START---
 {job_description}
 ---JOB DESCRIPTION END---
 
-Please tailor this resume for the job. Output the JSON metadata block first, then the LaTeX body content."""
+Tailor this resume for the job. Output the JSON metadata block first, then the LaTeX body."""
 
         claude_response = await call_claude(SYSTEM_PROMPT, user_message)
-
         name, contact_line, latex_body = parse_claude_response(claude_response)
+        latex_body = sanitize_latex(latex_body)
+        full_latex = build_full_latex(name, contact_line, latex_body)
 
-        # Build final LaTeX document
-        full_latex = LATEX_TEMPLATE.replace("<<NAME>>", name)
-        full_latex = full_latex.replace("<<CONTACT_LINE>>", contact_line)
-        full_latex = full_latex.replace("<<BODY>>", latex_body)
-
-        # Compile to PDF
+        # Try to compile
         pdf_base64_str = None
         compile_error = None
         try:
             pdf_path = compile_latex(full_latex)
             with open(pdf_path, "rb") as f:
                 pdf_base64_str = base64.b64encode(f.read()).decode("utf-8")
-        except Exception as e:
-            compile_error = str(e)
+        except Exception as first_err:
+            # Auto-retry: ask Claude to fix the broken LaTeX
+            try:
+                fix_msg = f"""This LaTeX body failed to compile:
+
+{latex_body[:3000]}
+
+Error log:
+{str(first_err)[-1500:]}
+
+Fix it so it compiles. Output ONLY the corrected LaTeX body starting from \\section. No code fences, no explanation."""
+
+                fixed = await call_claude(
+                    "You fix broken LaTeX. Output ONLY corrected LaTeX code. No markdown, no explanation, no code fences.",
+                    fix_msg,
+                )
+                fixed = re.sub(r"```.*?\n?", "", fixed).strip()
+                fixed = sanitize_latex(fixed)
+                full_latex = build_full_latex(name, contact_line, fixed)
+                pdf_path = compile_latex(full_latex)
+                with open(pdf_path, "rb") as f:
+                    pdf_base64_str = base64.b64encode(f.read()).decode("utf-8")
+            except Exception as retry_err:
+                compile_error = f"Compilation failed after auto-fix retry. Error: {str(first_err)[-500:]}"
 
         return JSONResponse(content={
             "success": pdf_base64_str is not None,
@@ -300,5 +328,4 @@ Please tailor this resume for the job. Output the JSON metadata block first, the
         })
 
 
-# Serve static files
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
