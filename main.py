@@ -114,11 +114,13 @@ YOUR APPROACH:
 - In Technical Skills, reorder tools to put job-relevant ones first.
 
 LENGTH RULES (CRITICAL — violating these ruins the resume):
-- Each reworded bullet MUST be the SAME length or SHORTER than the original bullet. NEVER make a bullet longer.
-- If the original bullet is 1 line, the new bullet must be 1 line.
-- If the original bullet is 2 lines, the new bullet must be 2 lines or less.
-- The total resume MUST fit on exactly ONE page. The original already fits on one page, so if you keep bullets the same length or shorter, it will still fit.
-- Do NOT add extra words, clauses, or detail that would make bullets longer than the originals.
+- Each reworded bullet MUST be SHORTER than or equal to the original bullet. NEVER make a bullet longer.
+- If the original bullet is 1 line, the new bullet must be 1 line or less.
+- If the original bullet is 2 lines, the new bullet must be 1.5-2 lines max.
+- When in doubt, make the bullet SHORTER. Cutting a few words is always better than overflowing to page 2.
+- The total resume MUST fit on exactly ONE page. The original fits on one page already.
+- Do NOT add extra words, clauses, adjectives, or detail that would make bullets longer.
+- For Technical Skills: keep EXACTLY the same number of category lines as the original (typically 2). Do NOT add a third category or split into more lines. Keep the same format: \textbf{Category:} list of tools\\[2pt]
 
 CHRONOLOGICAL ORDER (CRITICAL):
 - Within each section, roles MUST be in reverse chronological order (most recent date first).
