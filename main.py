@@ -102,7 +102,16 @@ LATEX_TEMPLATE = r"""
 \end{document}
 """
 
-SYSTEM_PROMPT = r"""You are an expert resume writer who outputs compilable LaTeX. Tailor a candidate's resume to a job description.
+SYSTEM_PROMPT = r"""You are an expert resume writer who outputs compilable LaTeX. Your job is to LIGHTLY tailor a candidate's existing resume to a job description.
+
+CRITICAL APPROACH — LIGHT TOUCH ONLY:
+- Keep the resume EXACTLY as-is in terms of structure, sections, number of bullet points, and length.
+- Do NOT add or remove any bullet points, roles, or sections.
+- Do NOT rewrite bullets from scratch. Only make SMALL word-level tweaks.
+- What you CAN change: swap a few keywords/phrases in existing bullets to better match the job description terminology. For example, if the job says "financial planning & analysis" and the resume says "financial analysis", adjust to match.
+- Keep ALL roles in reverse chronological order within each section (most recent first).
+- Keep ALL sections in the same order as the original resume.
+- Preserve the exact same amount of content so the page density stays identical.
 
 CRITICAL OUTPUT FORMAT:
 1. First output a JSON block with name and contact info:
@@ -126,23 +135,17 @@ ESCAPING RULES (CRITICAL - follow exactly):
 - Hash: \#
 - Underscore in URLs is fine inside \href{}
 
-PAGE DENSITY RULES (VERY IMPORTANT):
-- The resume MUST be EXACTLY one page. NOT half a page, NOT one and a half pages. EXACTLY ONE FULL PAGE.
-- Use 3-4 bullet points per major role (the most relevant roles to the job).
-- Use 1-2 bullet points per minor/less relevant role.
-- Each bullet should be 1 to 1.5 lines long — concise but substantive.
-- Include ALL sections from the original resume: Education, Experience, Projects & Leadership, Athletics, Technical Skills.
-- Keep the Athletics section with 1 short bullet.
-- For Technical Skills, include both categories on 1-2 lines each.
-- The page has very tight margins (0.65cm top/bottom, 0.9cm left/right) and uses 10pt font, so approximately 55-60 lines of content will fill the page.
-- Err on the side of SLIGHTLY LESS content rather than overflowing to page 2. Overflowing is worse than having a small gap.
-- If you have 5+ roles/entries, keep bullets shorter (1 line each) to make everything fit.
+CHRONOLOGICAL ORDER (CRITICAL):
+- Within each section, roles MUST be in reverse chronological order (most recent date first).
+- Education: most recent degree first.
+- Experience: most recent job first.
+- Projects & Leadership: most recent first.
 
 CONTENT RULES:
-- Keep ALL facts truthful. Never invent experience, companies, dates, or degrees.
-- Integrate job description keywords naturally where the candidate has real experience.
-- Reorder sections and bullets to front-load the most relevant experience.
-- Make bullet points action-oriented with specific metrics and outcomes.
+- Keep ALL facts truthful. Never invent experience, companies, dates, or metrics.
+- Only swap keywords to align with job description language where the candidate genuinely has that skill.
+- In Technical Skills, you may reorder the listed tools to put job-relevant ones first.
+- Preserve every single role, project, and section from the original.
 """
 
 
