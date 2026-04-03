@@ -456,6 +456,70 @@
     .pdf-viewer { height: 500px; }
   }
 
+  /* Page Toggle */
+  .page-toggle {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px 28px;
+    margin-bottom: 24px;
+    transition: border-color 0.3s;
+  }
+
+  .page-toggle:hover { border-color: var(--border-hover); }
+
+  .toggle-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .toggle-btn {
+    background: var(--surface-2);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    color: var(--text-muted);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.25s;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .toggle-btn svg { stroke: var(--text-dim); transition: stroke 0.25s; }
+
+  .toggle-btn:hover { border-color: var(--border-hover); color: var(--text); }
+  .toggle-btn:hover svg { stroke: var(--text-muted); }
+
+  .toggle-btn.active {
+    border-color: var(--accent);
+    color: var(--text);
+    background: var(--accent-dim);
+  }
+
+  .toggle-btn.active svg { stroke: var(--accent); }
+
+  .toggle-btn.disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  .toggle-desc {
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--text-dim);
+    width: 100%;
+    margin-top: 2px;
+  }
+
+  .toggle-btn.active .toggle-desc { color: var(--text-muted); }
+
   /* Fade-in on load */
   .fade-in {
     opacity: 0;
@@ -518,6 +582,23 @@
     <div class="card fade-in">
       <div class="card-label"><span class="num">2</span> Job Description</div>
       <textarea class="jd-textarea" id="jobDescription" placeholder="Paste the full job description here...&#10;&#10;Include the title, responsibilities, qualifications, and any preferred skills or tools mentioned."></textarea>
+    </div>
+  </div>
+
+  <!-- Page Length Toggle -->
+  <div class="page-toggle fade-in">
+    <div class="card-label"><span class="num">3</span> Resume Length</div>
+    <div class="toggle-row">
+      <button class="toggle-btn active" id="btn1Page" data-pages="1">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+        1 Page
+        <span class="toggle-desc">Entry-level / early career</span>
+      </button>
+      <button class="toggle-btn" id="btn2Page" data-pages="2">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></svg>
+        2 Pages
+        <span class="toggle-desc">Senior / executive (10+ yrs)</span>
+      </button>
     </div>
   </div>
 
@@ -591,6 +672,50 @@
   let resumeText = '';
   let currentPdfBlob = null;
   let currentLatex = '';
+  let maxPages = 1;
+  let resumePageCount = 1;
+
+  // --- Page Toggle ---
+  const btn1Page = document.getElementById('btn1Page');
+  const btn2Page = document.getElementById('btn2Page');
+  btn1Page.addEventListener('click', () => {
+    maxPages = 1;
+    btn1Page.classList.add('active');
+    btn2Page.classList.remove('active');
+  });
+  btn2Page.addEventListener('click', () => {
+    if (btn2Page.classList.contains('disabled')) return;
+    maxPages = 2;
+    btn2Page.classList.add('active');
+    btn1Page.classList.remove('active');
+  });
+
+  function updatePageToggle(pages) {
+    resumePageCount = pages;
+    if (pages < 2) {
+      // Lock to 1 page only
+      btn2Page.classList.add('disabled');
+      btn2Page.title = 'Upload a 2+ page resume to enable this option';
+      maxPages = 1;
+      btn1Page.classList.add('active');
+      btn2Page.classList.remove('active');
+    } else {
+      btn2Page.classList.remove('disabled');
+      btn2Page.title = '';
+    }
+  }
+
+  async function checkResumePages() {
+    try {
+      const formData = new FormData();
+      formData.append('resume_text', resumeText);
+      const resp = await fetch('/api/check-resume', { method: 'POST', body: formData });
+      const data = await resp.json();
+      updatePageToggle(data.pages || 1);
+    } catch (e) {
+      updatePageToggle(1);
+    }
+  }
 
   // --- Drag & Drop ---
   dropZone.addEventListener('click', () => fileInput.click());
@@ -608,6 +733,7 @@
     fileInput.value = '';
     fileAttached.classList.remove('show');
     dropZone.style.display = 'flex';
+    updatePageToggle(1);
     updateBtn();
   });
 
@@ -627,6 +753,7 @@
           resumeText = '[PDF_BASE64]:' + reader.result.split(',')[1];
           showFileInfo(file);
           updateBtn();
+          checkResumePages();
         };
         reader.readAsDataURL(file);
         return;
@@ -637,6 +764,7 @@
 
     showFileInfo(file);
     updateBtn();
+    checkResumePages();
   }
 
   function showFileInfo(file) {
@@ -665,6 +793,7 @@
     const formData = new FormData();
     formData.append('resume_text', resumeText);
     formData.append('job_description', jobDesc.value);
+    formData.append('max_pages', maxPages.toString());
 
     try {
       const resp = await fetch('/api/tailor-json', { method: 'POST', body: formData });
