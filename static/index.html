@@ -620,6 +620,10 @@
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
           View LaTeX
         </button>
+        <button class="btn-action" id="btnDownloadDocx">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Download Word
+        </button>
         <button class="btn-action primary" id="btnDownload">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Download PDF
@@ -663,6 +667,7 @@
   const results = document.getElementById('results');
   const pdfViewer = document.getElementById('pdfViewer');
   const btnDownload = document.getElementById('btnDownload');
+  const btnDownloadDocx = document.getElementById('btnDownloadDocx');
   const btnViewLatex = document.getElementById('btnViewLatex');
   const latexModal = document.getElementById('latexModal');
   const latexCode = document.getElementById('latexCode');
@@ -854,13 +859,47 @@
     statusText.textContent = msg;
   }
 
-  // --- Download ---
+  // --- Download PDF ---
   btnDownload.addEventListener('click', () => {
     if (!currentPdfBlob) return;
     const a = document.createElement('a');
     a.href = URL.createObjectURL(currentPdfBlob);
     a.download = 'tailored_resume.pdf';
     a.click();
+  });
+
+  // --- Download Word ---
+  btnDownloadDocx.addEventListener('click', async () => {
+    if (!currentLatex) return;
+    const origText = btnDownloadDocx.innerHTML;
+    btnDownloadDocx.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2v10"/><path d="M18.4 18.4A9 9 0 1 1 5.6 5.6"/></svg> Converting...';
+    btnDownloadDocx.disabled = true;
+
+    try {
+      const formData = new FormData();
+      formData.append('latex', currentLatex);
+      const resp = await fetch('/api/download-docx', { method: 'POST', body: formData });
+      const data = await resp.json();
+
+      if (data.success && data.docx_base64) {
+        const byteChars = atob(data.docx_base64);
+        const byteNumbers = new Array(byteChars.length);
+        for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i);
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'tailored_resume.docx';
+        a.click();
+      } else {
+        showStatus('error', 'Word conversion failed: ' + (data.error || 'Unknown error'));
+      }
+    } catch (err) {
+      showStatus('error', 'Word download failed: ' + err.message);
+    }
+
+    btnDownloadDocx.innerHTML = origText;
+    btnDownloadDocx.disabled = false;
   });
 
   // --- LaTeX Viewer ---
