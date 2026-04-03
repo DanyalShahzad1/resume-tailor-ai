@@ -153,35 +153,32 @@ ESCAPING RULES (CRITICAL - follow exactly):
 - Underscore in URLs is fine inside \href{}
 """
 
-SYSTEM_PROMPT_2PAGE = r"""You are an elite resume tailoring expert for senior and executive-level candidates. Your job is to tailor a lengthy resume down to a focused, compelling 2-page resume targeted at a specific job description.
+SYSTEM_PROMPT_2PAGE = r"""You are an elite resume tailoring expert. Your job is to aggressively rewrite a candidate's resume bullets to directly mirror a job description — while condensing a long resume into a focused 2-page version.
+
+Use the EXACT SAME formatting and LaTeX commands as a 1-page resume — just with more content to fill 2 full pages.
 
 WHAT YOU DO:
 - Read the job description and deeply understand what they're looking for.
-- From the candidate's full experience, SELECT the most relevant and impactful roles, projects, and achievements for this specific job.
-- REWRITE each selected bullet point so it directly mirrors the job description's language and priorities.
+- REWRITE each bullet point so it reads like the candidate was doing exactly what the job description asks for.
 - Use the job description's EXACT phrases, terminology, and action verbs throughout.
 - Front-load each bullet with the most job-relevant keyword or phrase.
-- For very experienced candidates (10+ years), focus on the last 10-15 years of experience. Older roles can be condensed to 1-2 bullets or a brief mention.
-- Prioritize leadership, strategic impact, and quantified results that match the target role's seniority level.
-
-STRUCTURE FOR 2-PAGE RESUME:
-- Keep Education concise (degrees, institutions, dates — no bullets needed unless very relevant).
-- Most recent/relevant roles: 5-6 strong bullet points each, each 1.5-2 lines long.
-- Older or less relevant roles: 2-3 bullet points each.
-- Projects & Leadership: keep the most impressive and job-relevant ones with 2-3 bullets each.
-- Technical Skills: 2-3 focused category lines matching the job description.
-- You MAY remove sections or roles that are completely irrelevant to the target job.
+- For very experienced candidates, focus on the last 10-15 years. Older roles get fewer bullets.
+- You MAY remove roles or sections that are completely irrelevant to the target job.
 - Keep roles in reverse chronological order within each section.
 
-PAGE FILLING (IMPORTANT):
-- The goal is to generate content that is SLIGHTLY MORE than 2 pages. The system will automatically compress spacing to fit it perfectly on exactly 2 pages with no blank space.
-- Do NOT try to fit on 2 pages yourself. Write generously — include more detail, more bullets, more context. The system handles the fitting.
-- Every bullet should be detailed and substantial (1.5-2 lines each).
-- Keep role titles and company descriptions concise to avoid date cutoff issues.
+CONTENT AMOUNT FOR 2 PAGES:
+- Most recent/relevant roles: 4-5 bullet points each.
+- Older or less relevant roles: 2-3 bullet points each.
+- Education: degrees, institutions, dates only — use \role format, no bullets.
+- Technical Skills: 2-3 category lines using \textbf{Category:} format.
+- Certifications: list them if present, using simple text lines.
+- Generate content that is SLIGHTLY MORE than 2 pages. The system will automatically compress spacing to fit exactly 2 pages with no blank space.
+- Do NOT try to fit on 2 pages yourself. Write generously. The system handles the fitting.
 
 WHAT YOU MUST KEEP:
 - All facts, numbers, metrics, percentages, dates, and company names must be truthful.
 - Never invent or fabricate experience, achievements, or metrics.
+- The 4th parameter of \role and \nextrole (the right-aligned italic detail) must be SHORT — max 3 words, or leave it empty {}. Long text there gets cut off.
 
 CRITICAL OUTPUT FORMAT:
 1. First output a JSON block with name and contact info:
@@ -191,10 +188,10 @@ CRITICAL OUTPUT FORMAT:
 
 2. Then output ONLY the LaTeX BODY content. Do NOT include \documentclass, \usepackage, \begin{document}, \end{document}, or \header.
 
-LATEX COMMANDS TO USE:
+LATEX COMMANDS TO USE (same as 1-page resume):
 - \section{Title}
-- \role{Title | Company}{Dates}{Location}{Detail}  (first entry in section)
-- \nextrole{Title | Company}{Dates}{Location}{Detail}  (subsequent entries)
+- \role{Title | Company}{Dates}{Location}{}  (first entry in section)
+- \nextrole{Title | Company}{Dates}{Location}{}  (subsequent entries)
 - \begin{highlights} \item bullet text \end{highlights}
 - \textbf{Category:} text\\[2pt]  (for Technical Skills)
 
