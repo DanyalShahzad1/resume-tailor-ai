@@ -850,115 +850,124 @@ def _parse_latex_body(latex_code: str):
     return name, contact_text, sections
 
 
-def latex_to_docx(latex_code: str) -> str:
-    """Convert LaTeX resume to a DOCX file. Returns path to the generated .docx."""
+def _build_docx(name, contact_text, sections, spacing_mult=1.0, font_size_pt=10.0):
+    """Build a DOCX document with configurable spacing multiplier.
+
+    spacing_mult=1.0 is the default. <1.0 tightens all spacing proportionally.
+    font_size_pt controls the body font size (default 10pt).
+    """
     from docx import Document as DocxDocument
-    from docx.shared import Pt, Inches, Cm, RGBColor
+    from docx.shared import Pt, Inches, Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
     from docx.oxml.ns import qn
 
-    name, contact_text, sections = _parse_latex_body(latex_code)
+    def sp(base_pt):
+        """Scale a spacing value by the multiplier, with a floor of 0."""
+        return Pt(max(0, round(base_pt * spacing_mult, 1)))
 
     doc = DocxDocument()
 
     # ── Page setup: Letter, tight margins matching the LaTeX ──
-    section = doc.sections[0]
-    section.page_width = Inches(8.5)
-    section.page_height = Inches(11)
-    section.top_margin = Cm(0.65)
-    section.bottom_margin = Cm(0.65)
-    section.left_margin = Cm(0.9)
-    section.right_margin = Cm(0.9)
+    sec = doc.sections[0]
+    sec.page_width = Inches(8.5)
+    sec.page_height = Inches(11)
+    margin_cm = max(0.5, 0.9 * spacing_mult) if spacing_mult < 0.85 else 0.9
+    sec.top_margin = Cm(max(0.4, 0.65 * spacing_mult)) if spacing_mult < 0.85 else Cm(0.65)
+    sec.bottom_margin = Cm(max(0.4, 0.65 * spacing_mult)) if spacing_mult < 0.85 else Cm(0.65)
+    sec.left_margin = Cm(margin_cm)
+    sec.right_margin = Cm(margin_cm)
 
     # ── Style definitions ──
     style = doc.styles["Normal"]
     style.font.name = "Calibri"
-    style.font.size = Pt(10)
+    style.font.size = Pt(font_size_pt)
     style.paragraph_format.space_before = Pt(0)
     style.paragraph_format.space_after = Pt(0)
-    style.paragraph_format.line_spacing = Pt(12)
+    line_sp = max(font_size_pt + 1, (font_size_pt + 2) * spacing_mult)
+    style.paragraph_format.line_spacing = Pt(line_sp)
 
     # ── Name header ──
+    name_sz = max(14, round(20 * min(spacing_mult, 1.0)))
     name_para = doc.add_paragraph()
     name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    name_para.paragraph_format.space_after = Pt(2)
+    name_para.paragraph_format.space_after = sp(2)
     name_run = name_para.add_run(name)
     name_run.bold = True
-    name_run.font.size = Pt(20)
+    name_run.font.size = Pt(name_sz)
     name_run.font.name = "Calibri"
 
     # ── Contact line ──
     if contact_text:
         contact_para = doc.add_paragraph()
         contact_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        contact_para.paragraph_format.space_after = Pt(4)
+        contact_para.paragraph_format.space_after = sp(4)
         contact_run = contact_para.add_run(contact_text)
-        contact_run.font.size = Pt(10)
+        contact_run.font.size = Pt(font_size_pt)
         contact_run.font.name = "Calibri"
 
+    # ── Content width for tab stops ──
+    left_m = margin_cm
+    right_m = margin_cm
+    content_width_twips = int((8.5 * 2.54 - left_m - right_m) / 2.54 * 1440)
+    tab_pos = Pt(content_width_twips / 20)
+
     # ── Sections ──
-    for sec in sections:
+    for section_data in sections:
         # Section heading with bottom border
         heading_para = doc.add_paragraph()
-        heading_para.paragraph_format.space_before = Pt(6)
-        heading_para.paragraph_format.space_after = Pt(3)
-        heading_run = heading_para.add_run(sec["title"])
+        heading_para.paragraph_format.space_before = sp(6)
+        heading_para.paragraph_format.space_after = sp(2)
+        heading_sz = max(font_size_pt + 1, round(12 * min(spacing_mult, 1.0)))
+        heading_run = heading_para.add_run(section_data["title"])
         heading_run.bold = True
-        heading_run.font.size = Pt(12)
+        heading_run.font.size = Pt(heading_sz)
         heading_run.font.name = "Calibri"
 
-        # Add bottom border to section heading
+        # Bottom border
         pPr = heading_para._p.get_or_add_pPr()
         pBdr = pPr.makeelement(qn("w:pBdr"), {})
         bottom = pBdr.makeelement(qn("w:bottom"), {
-            qn("w:val"): "single",
-            qn("w:sz"): "6",
-            qn("w:space"): "1",
-            qn("w:color"): "000000",
+            qn("w:val"): "single", qn("w:sz"): "6",
+            qn("w:space"): "1", qn("w:color"): "000000",
         })
         pBdr.append(bottom)
         pPr.append(pBdr)
 
-        for entry in sec["entries"]:
-            # ── Skill lines (Technical Skills section) ──
+        for entry in section_data["entries"]:
+            # ── Skill lines ──
             if entry.get("skill_category"):
                 skill_para = doc.add_paragraph()
-                skill_para.paragraph_format.space_before = Pt(1)
-                skill_para.paragraph_format.space_after = Pt(1)
+                skill_para.paragraph_format.space_before = sp(0.5)
+                skill_para.paragraph_format.space_after = sp(0.5)
                 cat_run = skill_para.add_run(entry["skill_category"] + " ")
                 cat_run.bold = True
-                cat_run.font.size = Pt(10)
+                cat_run.font.size = Pt(font_size_pt)
                 cat_run.font.name = "Calibri"
                 content_run = skill_para.add_run(entry["skill_content"])
-                content_run.font.size = Pt(10)
+                content_run.font.size = Pt(font_size_pt)
                 content_run.font.name = "Calibri"
                 continue
 
             # ── Plain text fallback ──
             if entry.get("plain_text"):
                 plain_para = doc.add_paragraph()
-                plain_para.paragraph_format.space_before = Pt(1)
+                plain_para.paragraph_format.space_before = sp(1)
                 plain_run = plain_para.add_run(entry["plain_text"])
-                plain_run.font.size = Pt(10)
+                plain_run.font.size = Pt(font_size_pt)
                 plain_run.font.name = "Calibri"
                 continue
 
-            # ── Role entry with tabbed layout ──
+            # ── Role entry ──
             if entry["role_line1"]:
-                # Line 1: Role/Title (bold) ... Date (bold italic, right-aligned)
                 role_para1 = doc.add_paragraph()
-                role_para1.paragraph_format.space_before = Pt(3)
+                role_para1.paragraph_format.space_before = sp(2)
                 role_para1.paragraph_format.space_after = Pt(0)
-
-                # Add right tab stop at page content width
-                content_width_twips = int((8.5 * 2.54 - 0.9 * 2) / 2.54 * 1440)
-                tab_stops = role_para1.paragraph_format.tab_stops
-                tab_stops.add_tab_stop(Pt(content_width_twips / 20),
-                                       alignment=WD_TAB_ALIGNMENT.RIGHT)
+                role_para1.paragraph_format.tab_stops.add_tab_stop(
+                    tab_pos, alignment=WD_TAB_ALIGNMENT.RIGHT)
 
                 title_run = role_para1.add_run(entry["role_line1"])
                 title_run.bold = True
-                title_run.font.size = Pt(10)
+                title_run.font.size = Pt(font_size_pt)
                 title_run.font.name = "Calibri"
 
                 if entry["date"]:
@@ -966,54 +975,133 @@ def latex_to_docx(latex_code: str) -> str:
                     date_run = role_para1.add_run(entry["date"])
                     date_run.bold = True
                     date_run.italic = True
-                    date_run.font.size = Pt(10)
+                    date_run.font.size = Pt(font_size_pt)
                     date_run.font.name = "Calibri"
 
-                # Line 2: Location (italic) ... Extra (italic, right-aligned)
                 if entry["role_line2"] or entry["extra"]:
                     role_para2 = doc.add_paragraph()
                     role_para2.paragraph_format.space_before = Pt(0)
-                    role_para2.paragraph_format.space_after = Pt(1)
-                    tab_stops2 = role_para2.paragraph_format.tab_stops
-                    tab_stops2.add_tab_stop(Pt(content_width_twips / 20),
-                                            alignment=WD_TAB_ALIGNMENT.RIGHT)
+                    role_para2.paragraph_format.space_after = sp(0.5)
+                    role_para2.paragraph_format.tab_stops.add_tab_stop(
+                        tab_pos, alignment=WD_TAB_ALIGNMENT.RIGHT)
 
                     if entry["role_line2"]:
                         loc_run = role_para2.add_run(entry["role_line2"])
                         loc_run.italic = True
-                        loc_run.font.size = Pt(10)
+                        loc_run.font.size = Pt(font_size_pt)
                         loc_run.font.name = "Calibri"
 
                     if entry["extra"]:
                         role_para2.add_run("\t")
                         extra_run = role_para2.add_run(entry["extra"])
                         extra_run.italic = True
-                        extra_run.font.size = Pt(10)
+                        extra_run.font.size = Pt(font_size_pt)
                         extra_run.font.name = "Calibri"
 
             # ── Bullet points ──
             for bullet_text in entry["bullets"]:
                 bullet_para = doc.add_paragraph(style="List Bullet")
-                bullet_para.paragraph_format.space_before = Pt(0.5)
-                bullet_para.paragraph_format.space_after = Pt(0.5)
+                bullet_para.paragraph_format.space_before = Pt(0)
+                bullet_para.paragraph_format.space_after = sp(0.3)
                 bullet_para.paragraph_format.left_indent = Pt(11)
                 bullet_para.paragraph_format.first_line_indent = Pt(-11)
+                bullet_para.paragraph_format.line_spacing = Pt(line_sp)
                 bullet_run = bullet_para.add_run(bullet_text)
-                bullet_run.font.size = Pt(10)
+                bullet_run.font.size = Pt(font_size_pt)
                 bullet_run.font.name = "Calibri"
 
-    # Save to temp file
+    return doc
+
+
+def _get_docx_page_count(docx_path: str) -> int:
+    """Convert DOCX to PDF via LibreOffice and count pages."""
+    tmpdir = os.path.dirname(docx_path)
+    try:
+        subprocess.run(
+            ["python3", "/mnt/skills/public/docx/scripts/office/soffice.py",
+             "--headless", "--convert-to", "pdf", docx_path],
+            capture_output=True, text=True, timeout=30,
+            cwd=tmpdir,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # Fallback to direct libreoffice call
+        try:
+            subprocess.run(
+                ["libreoffice", "--headless", "--convert-to", "pdf",
+                 "--outdir", tmpdir, docx_path],
+                capture_output=True, text=True, timeout=30,
+            )
+        except Exception:
+            return 1
+
+    pdf_name = os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
+    pdf_path = os.path.join(tmpdir, pdf_name)
+    if os.path.exists(pdf_path):
+        return get_pdf_page_count(pdf_path)
+    return 1
+
+
+def latex_to_docx(latex_code: str, max_pages: int = 1) -> str:
+    """Convert LaTeX resume to a DOCX file that fits within max_pages.
+
+    Uses iterative spacing reduction: generates the DOCX, converts to PDF
+    via LibreOffice to check page count, and retries with tighter spacing
+    if it overflows.
+    """
+    name, contact_text, sections = _parse_latex_body(latex_code)
+
+    # Phase 1: Try default spacing
+    doc = _build_docx(name, contact_text, sections, spacing_mult=1.0, font_size_pt=10.0)
     tmpdir = tempfile.mkdtemp()
     docx_path = os.path.join(tmpdir, "tailored_resume.docx")
     doc.save(docx_path)
-    return docx_path
+
+    pages = _get_docx_page_count(docx_path)
+    if pages <= max_pages:
+        return docx_path
+
+    # Phase 2: Binary search spacing_mult from 1.0 down to 0.3
+    best_path = docx_path
+    lo, hi = 0.3, 1.0
+    for _ in range(8):
+        mid = (lo + hi) / 2
+        doc = _build_docx(name, contact_text, sections, spacing_mult=mid, font_size_pt=10.0)
+        trial_dir = tempfile.mkdtemp()
+        trial_path = os.path.join(trial_dir, "tailored_resume.docx")
+        doc.save(trial_path)
+        trial_pages = _get_docx_page_count(trial_path)
+        if trial_pages <= max_pages:
+            # Fits — try less aggressive shrink
+            shutil.rmtree(os.path.dirname(best_path), ignore_errors=True)
+            best_path = trial_path
+            lo = mid
+        else:
+            shutil.rmtree(trial_dir, ignore_errors=True)
+            hi = mid
+
+    if _get_docx_page_count(best_path) <= max_pages:
+        return best_path
+
+    # Phase 3: Also reduce font size
+    for font_sz in [9.5, 9.0, 8.5]:
+        doc = _build_docx(name, contact_text, sections, spacing_mult=0.3, font_size_pt=font_sz)
+        trial_dir = tempfile.mkdtemp()
+        trial_path = os.path.join(trial_dir, "tailored_resume.docx")
+        doc.save(trial_path)
+        if _get_docx_page_count(trial_path) <= max_pages:
+            shutil.rmtree(os.path.dirname(best_path), ignore_errors=True)
+            return trial_path
+        shutil.rmtree(trial_dir, ignore_errors=True)
+
+    return best_path
 
 
 @app.post("/api/download-docx")
-async def download_docx(latex: str = Form(...)):
+async def download_docx(latex: str = Form(...), max_pages: int = Form(1)):
     """Convert the stored LaTeX to a DOCX and return as base64."""
     try:
-        docx_path = latex_to_docx(latex)
+        max_pages = max(1, min(2, max_pages))
+        docx_path = latex_to_docx(latex, max_pages)
         with open(docx_path, "rb") as f:
             docx_base64 = base64.b64encode(f.read()).decode("utf-8")
         shutil.rmtree(os.path.dirname(docx_path), ignore_errors=True)
