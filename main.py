@@ -80,7 +80,7 @@ LATEX_TEMPLATE = r"""
 \titleformat{\section}{\bfseries\large}{}{0pt}{}[\titlerule]
 \titlespacing*{\section}{0pt}{0.13cm}{0.07cm}
 \newcommand{\baseRole}[4]{%
-  \noindent\begin{tabular*}{\textwidth}{@{}p{0.74\textwidth}@{\extracolsep{\fill}}r@{}}%
+  \noindent\begin{tabular*}{\textwidth}{@{}p{0.64\textwidth}@{\extracolsep{\fill}}r@{}}%
   \textbf{#1} & \textbf{\textit{#2}}\\%
   \textit{#3} & \textit{#4}\\%
   \end{tabular*}\vspace{0.03cm}%
@@ -124,7 +124,11 @@ WHAT YOU MUST KEEP THE SAME:
 - Same sections, same roles, same number of bullet points per role. Do NOT add or remove bullets.
 - All facts, numbers, metrics, percentages, dates, and company names stay unchanged.
 - Same order of roles and sections as the original.
-- Keep each bullet APPROXIMATELY the same length as the original. If anything, make bullets SLIGHTLY longer (add a relevant keyword or two) rather than shorter. The resume must fill the full page.
+
+PAGE FILLING (IMPORTANT):
+- Make each bullet SLIGHTLY LONGER than the original — add 5-10 extra words per bullet using job-relevant keywords, context, or detail.
+- The goal is to generate content that is SLIGHTLY MORE than 1 page. The system will automatically compress spacing to fit it perfectly on exactly 1 page with no blank space.
+- Do NOT try to fit on 1 page yourself. Intentionally write a bit more than fits. The system handles the fitting.
 
 CRITICAL OUTPUT FORMAT:
 1. First output a JSON block with name and contact info:
@@ -168,7 +172,12 @@ STRUCTURE FOR 2-PAGE RESUME:
 - Technical Skills: 2-3 focused category lines matching the job description.
 - You MAY remove sections or roles that are completely irrelevant to the target job.
 - Keep roles in reverse chronological order within each section.
-- The resume MUST fill BOTH pages fully. Do not leave large blank space on page 2. If needed, include more roles, expand bullets with additional relevant detail, or add more bullet points to key roles.
+
+PAGE FILLING (IMPORTANT):
+- The goal is to generate content that is SLIGHTLY MORE than 2 pages. The system will automatically compress spacing to fit it perfectly on exactly 2 pages with no blank space.
+- Do NOT try to fit on 2 pages yourself. Write generously — include more detail, more bullets, more context. The system handles the fitting.
+- Every bullet should be detailed and substantial (1.5-2 lines each).
+- Keep role titles and company descriptions concise to avoid date cutoff issues.
 
 WHAT YOU MUST KEEP:
 - All facts, numbers, metrics, percentages, dates, and company names must be truthful.
@@ -272,11 +281,14 @@ def compile_latex_fit_pages(latex_code: str, max_pages: int = 1) -> str:
     # === SHRINK if over max_pages ===
     if pages > max_pages:
         shrink_attempts = [
-            (r"\itemsep=0.6pt", r"\itemsep=0pt"),
-            (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}", r"\titlespacing*{\section}{0pt}{0.08cm}{0.04cm}"),
-            (r"\vspace{0.04cm}", r"\vspace{0.01cm}"),
-            (r"top=0.65cm,bottom=0.65cm", r"top=0.5cm,bottom=0.5cm"),
+            (r"\itemsep=0.6pt", r"\itemsep=0.2pt"),
+            (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}", r"\titlespacing*{\section}{0pt}{0.09cm}{0.05cm}"),
+            (r"\vspace{0.04cm}", r"\vspace{0.02cm}"),
             (r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.01cm}"),
+            (r"top=0.65cm,bottom=0.65cm", r"top=0.5cm,bottom=0.5cm"),
+            (r"left=0.9cm,right=0.9cm", r"left=0.75cm,right=0.75cm"),
+            (r"\itemsep=0.2pt", r"\itemsep=0pt"),
+            (r"\titlespacing*{\section}{0pt}{0.09cm}{0.05cm}", r"\titlespacing*{\section}{0pt}{0.06cm}{0.03cm}"),
         ]
 
         modified = latex_code
@@ -298,31 +310,22 @@ def compile_latex_fit_pages(latex_code: str, max_pages: int = 1) -> str:
     # === EXPAND if under max_pages (content doesn't fill target) ===
     if pages < max_pages:
         expand_attempts = [
-            # Attempt 1: increase item spacing
             (r"\itemsep=0.6pt", r"\itemsep=2pt"),
-            # Attempt 2: increase section spacing
-            (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}", r"\titlespacing*{\section}{0pt}{0.25cm}{0.12cm}"),
-            # Attempt 3: increase role spacing
-            (r"\vspace{0.04cm}", r"\vspace{0.12cm}"),
-            # Attempt 4: increase base role vspace
-            (r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.08cm}"),
-            # Attempt 5: increase margins slightly
-            (r"top=0.65cm,bottom=0.65cm", r"top=0.85cm,bottom=0.85cm"),
+            (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}", r"\titlespacing*{\section}{0pt}{0.22cm}{0.1cm}"),
+            (r"\vspace{0.04cm}", r"\vspace{0.1cm}"),
+            (r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.07cm}"),
         ]
 
         modified = latex_code
         for old, new in expand_attempts:
-            prev_path = pdf_path
             test_modified = modified.replace(old, new)
             test_path = compile_latex(test_modified)
             test_pages = get_pdf_page_count(test_path)
             if test_pages <= max_pages:
-                # This expansion still fits, keep it
                 modified = test_modified
                 shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
                 pdf_path = test_path
             else:
-                # This expansion pushed it over, skip it
                 shutil.rmtree(os.path.dirname(test_path), ignore_errors=True)
 
         return pdf_path
