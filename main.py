@@ -73,6 +73,9 @@ LATEX_TEMPLATE = r"""
   pdfauthor={<<NAME>>}
 }
 \raggedright
+\sloppy
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
 \pagestyle{empty}
 \setcounter{secnumdepth}{0}
 \setlength{\parindent}{0pt}
@@ -125,10 +128,12 @@ WHAT YOU MUST KEEP THE SAME:
 - All facts, numbers, metrics, percentages, dates, and company names stay unchanged.
 - Same order of roles and sections as the original.
 
-PAGE FILLING (IMPORTANT):
-- Make each bullet SLIGHTLY LONGER than the original — add 5-10 extra words per bullet using job-relevant keywords, context, or detail.
-- The goal is to generate content that is SLIGHTLY MORE than 1 page. The system will automatically compress spacing to fit it perfectly on exactly 1 page with no blank space.
-- Do NOT try to fit on 1 page yourself. Intentionally write a bit more than fits. The system handles the fitting.
+PAGE FILLING (CRITICAL):
+- Make each bullet 10-15 words LONGER than the original. Add job-relevant keywords, context, outcomes, and detail.
+- You MUST generate content that OVERFLOWS past 1 page. Aim for roughly 1.15-1.25 pages of content. The system will automatically compress spacing to fit it perfectly on exactly 1 page.
+- Do NOT try to fit on 1 page yourself. Write MORE than fits. The system handles the fitting.
+- If a bullet was 1 line, make it 1.5-2 lines. If it was 2 lines, make it 2-2.5 lines.
+- It is MUCH better to write too much (system shrinks it) than too little (leaves blank space).
 
 CRITICAL OUTPUT FORMAT:
 1. First output a JSON block with name and contact info:
@@ -172,8 +177,13 @@ CONTENT AMOUNT FOR 2 PAGES:
 - Education: degrees, institutions, dates only — use \role format, no bullets.
 - Technical Skills: 2-3 category lines using \textbf{Category:} format.
 - Certifications: list them if present, using simple text lines.
-- Generate content that is SLIGHTLY MORE than 2 pages. The system will automatically compress spacing to fit exactly 2 pages with no blank space.
-- Do NOT try to fit on 2 pages yourself. Write generously. The system handles the fitting.
+
+PAGE FILLING (CRITICAL):
+- You MUST generate content that OVERFLOWS past 2 pages. Aim for roughly 2.2-2.4 pages of content. The system will automatically compress spacing to fit exactly 2 pages.
+- Do NOT try to fit on 2 pages yourself. Write MORE than fits. The system handles the fitting.
+- Use 5-6 bullet points per major role, each 1.5-2 lines long.
+- Use 3-4 bullet points per minor role.
+- It is MUCH better to write too much (system shrinks it) than too little (leaves blank space).
 
 WHAT YOU MUST KEEP:
 - All facts, numbers, metrics, percentages, dates, and company names must be truthful.
