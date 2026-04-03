@@ -878,6 +878,7 @@
     try {
       const formData = new FormData();
       formData.append('latex', currentLatex);
+      formData.append('max_pages', maxPages.toString());
       const resp = await fetch('/api/download-docx', { method: 'POST', body: formData });
       const data = await resp.json();
 
