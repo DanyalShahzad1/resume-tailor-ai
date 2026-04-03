@@ -273,67 +273,284 @@ def compile_latex(latex_code: str) -> str:
     return pdf_path
 
 
+def _get_remaining_space_pt(latex_code: str, max_pages: int) -> float:
+    r"""Measure remaining vertical space on the last target page in points.
+
+    Inserts a \\write command at \\end{document} that records \\pagetotal
+    (how much vertical content is on the current page) and \\pagegoal
+    (total available height on the page).  After compilation we parse
+    these values from the .log file.
+    """
+    probe = latex_code.replace(
+        r"\end{document}",
+        r"""
+\makeatletter
+\typeout{PAGEFIT::pagetotal=\the\pagetotal::pagegoal=\the\pagegoal}
+\makeatother
+\end{document}"""
+    )
+    tmpdir = tempfile.mkdtemp()
+    tex_path = os.path.join(tmpdir, "probe.tex")
+    with open(tex_path, "w", encoding="utf-8") as f:
+        f.write(probe)
+    subprocess.run(
+        ["pdflatex", "-interaction=nonstopmode", "-output-directory", tmpdir, tex_path],
+        capture_output=True, text=True, timeout=30,
+    )
+    log_path = os.path.join(tmpdir, "probe.log")
+    pagetotal = pagegoal = 0.0
+    if os.path.exists(log_path):
+        with open(log_path, "r", errors="ignore") as f:
+            for line in f:
+                m = re.search(r"PAGEFIT::pagetotal=([\d.]+)pt::pagegoal=([\d.]+)pt", line)
+                if m:
+                    pagetotal = float(m.group(1))
+                    pagegoal = float(m.group(2))
+    shutil.rmtree(tmpdir, ignore_errors=True)
+    return pagegoal - pagetotal  # remaining space in pt
+
+
+def _apply_spacing_multiplier(latex_code: str, mult: float) -> str:
+    """Apply a spacing multiplier to all tunable spacing parameters.
+
+    mult=1.0 → original values. mult>1 → expand spacing. mult<1 → shrink spacing.
+    Values are clamped to sensible minimums.
+
+    Escaping notes:
+    - In regex PATTERN (raw string): r"\\\\" matches one literal backslash
+      (but since we use r"", r"\\" is 2 chars which regex reads as: match 1 backslash)
+    - In re.sub REPLACEMENT (f-string): "\\\\\\\\" produces one literal backslash
+      (re.sub replacement processes \\\\ → \\)
+    """
+    def scale(base, minimum, maximum):
+        return max(minimum, min(maximum, round(base * mult, 3)))
+
+    m = latex_code
+
+    # itemsep in highlights (no backslash prefix — simple match)
+    new_itemsep = scale(0.6, 0.0, 4.0)
+    m = re.sub(r"itemsep=[\d.]+pt", f"itemsep={new_itemsep}pt", m)
+
+    # topsep in highlights
+    new_topsep = scale(0.03, 0.005, 0.15)
+    m = re.sub(r"topsep=[\d.]+cm", f"topsep={new_topsep}cm", m)
+
+    # parsep in highlights
+    new_parsep = scale(0.0, 0.0, 2.0)
+    m = re.sub(r"parsep=[\d.]+pt", f"parsep={new_parsep}pt", m)
+
+    # section title spacing: \titlespacing*{\section}{0pt}{X}{Y}
+    new_sec_before = scale(0.13, 0.04, 0.40)
+    new_sec_after = scale(0.07, 0.02, 0.20)
+    m = re.sub(
+        r"\\titlespacing\*\{\\section\}\{0pt\}\{[\d.]+cm\}\{[\d.]+cm\}",
+        f"\\\\titlespacing*{{\\\\section}}{{0pt}}{{{new_sec_before}cm}}{{{new_sec_after}cm}}",
+        m,
+    )
+
+    # \vspace between roles (\nextrole definition)
+    new_role_gap = scale(0.04, 0.01, 0.18)
+    m = re.sub(
+        r"\\newcommand\{\\nextrole\}\[4\]\{\\vspace\{[\d.]+cm\}",
+        f"\\\\newcommand{{\\\\nextrole}}[4]{{\\\\vspace{{{new_role_gap}cm}}",
+        m,
+    )
+
+    # vspace after tabular* in baseRole definition
+    new_tab_gap = scale(0.03, 0.005, 0.12)
+    m = re.sub(
+        r"\\end\{tabular\*\}\\vspace\{[\d.]+cm\}",
+        f"\\\\end{{tabular*}}\\\\vspace{{{new_tab_gap}cm}}",
+        m,
+    )
+
+    return m
+
+
 def compile_latex_fit_pages(latex_code: str, max_pages: int = 1) -> str:
-    """Compile LaTeX and auto-adjust to fit exactly max_pages."""
+    """Compile LaTeX and auto-adjust spacing to fill exactly max_pages.
+
+    Strategy:
+    1. Compile and check page count.
+    2. If content overflows (pages > max_pages): binary-search a spacing
+       multiplier < 1.0 that shrinks spacing. If spacing alone isn't enough,
+       progressively tighten margins, then reduce font size.
+    3. If content is under (pages <= max_pages but space remains): binary-search
+       a spacing multiplier > 1.0 that expands spacing to fill the page.
+       After finding the best multiplier that stays on max_pages, use
+       \vfill between sections to distribute any residual gap evenly.
+    """
     pdf_path = compile_latex(latex_code)
     pages = get_pdf_page_count(pdf_path)
 
-    # === SHRINK if over max_pages ===
+    # ── SHRINK: content overflows past max_pages ──────────────────────
     if pages > max_pages:
-        # Level 1: tighten all spacing
-        m = latex_code
-        m = m.replace(r"\itemsep=0.6pt", r"\itemsep=0pt")
-        m = m.replace(r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}",
-                       r"\titlespacing*{\section}{0pt}{0.08cm}{0.04cm}")
-        m = m.replace(r"\vspace{0.04cm}", r"\vspace{0.01cm}")
-        m = m.replace(r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.01cm}")
-        m = m.replace(r"topsep=0.03cm", r"topsep=0.01cm")
-        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
-        pdf_path = compile_latex(m)
-        if get_pdf_page_count(pdf_path) <= max_pages:
-            return pdf_path
+        best_path = pdf_path
+        best_code = latex_code
 
-        # Level 2: tighten margins
-        m = m.replace(r"top=0.65cm,bottom=0.65cm", r"top=0.4cm,bottom=0.4cm")
-        m = m.replace(r"left=0.9cm,right=0.9cm", r"left=0.7cm,right=0.7cm")
-        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
-        pdf_path = compile_latex(m)
-        if get_pdf_page_count(pdf_path) <= max_pages:
-            return pdf_path
-
-        # Level 3: \small font
-        m = m.replace(r"\begin{document}", r"\begin{document}\small")
-        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
-        pdf_path = compile_latex(m)
-        if get_pdf_page_count(pdf_path) <= max_pages:
-            return pdf_path
-
-        # Level 4: \footnotesize font
-        m = m.replace(r"\begin{document}\small", r"\begin{document}\footnotesize")
-        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
-        pdf_path = compile_latex(m)
-        return pdf_path
-
-    # === EXPAND if under max_pages ===
-    if pages < max_pages:
-        expand_steps = [
-            (r"\itemsep=0.6pt", r"\itemsep=2.5pt"),
-            (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}",
-             r"\titlespacing*{\section}{0pt}{0.25cm}{0.12cm}"),
-            (r"\vspace{0.04cm}", r"\vspace{0.12cm}"),
-            (r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.08cm}"),
-        ]
-        m = latex_code
-        for old, new in expand_steps:
-            test = m.replace(old, new)
-            tp = compile_latex(test)
+        # Phase 1: binary-search spacing multiplier from 1.0 down to 0.1
+        lo, hi = 0.1, 1.0
+        for _ in range(8):
+            mid = (lo + hi) / 2
+            candidate = _apply_spacing_multiplier(latex_code, mid)
+            tp = compile_latex(candidate)
             if get_pdf_page_count(tp) <= max_pages:
-                m = test
-                shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
-                pdf_path = tp
+                # fits — try less aggressive shrink
+                shutil.rmtree(os.path.dirname(best_path), ignore_errors=True)
+                best_path = tp
+                best_code = candidate
+                lo = mid
             else:
                 shutil.rmtree(os.path.dirname(tp), ignore_errors=True)
-        return pdf_path
+                hi = mid
+
+        if get_pdf_page_count(best_path) <= max_pages:
+            # Now expand within the remaining space (fall through to expand)
+            latex_code = best_code
+            shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+            pdf_path = best_path
+            pages = get_pdf_page_count(pdf_path)
+        else:
+            # Phase 2: tighten margins
+            m = best_code
+            margin_steps = [
+                (r"top=0.65cm,bottom=0.65cm", r"top=0.50cm,bottom=0.50cm"),
+                (r"top=0.50cm,bottom=0.50cm", r"top=0.40cm,bottom=0.40cm"),
+                (r"left=0.9cm,right=0.9cm", r"left=0.75cm,right=0.75cm"),
+                (r"left=0.75cm,right=0.75cm", r"left=0.60cm,right=0.60cm"),
+            ]
+            for old, new in margin_steps:
+                m = m.replace(old, new)
+                tp = compile_latex(m)
+                if get_pdf_page_count(tp) <= max_pages:
+                    shutil.rmtree(os.path.dirname(best_path), ignore_errors=True)
+                    best_path = tp
+                    best_code = m
+                    break
+                shutil.rmtree(os.path.dirname(tp), ignore_errors=True)
+
+            if get_pdf_page_count(best_path) > max_pages:
+                # Phase 3: reduce font size
+                for font_cmd in [r"\small", r"\footnotesize"]:
+                    m = best_code.replace(r"\begin{document}", r"\begin{document}" + font_cmd)
+                    tp = compile_latex(m)
+                    if get_pdf_page_count(tp) <= max_pages:
+                        shutil.rmtree(os.path.dirname(best_path), ignore_errors=True)
+                        best_path = tp
+                        best_code = m
+                        break
+                    shutil.rmtree(os.path.dirname(tp), ignore_errors=True)
+
+            latex_code = best_code
+            shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+            pdf_path = best_path
+            pages = get_pdf_page_count(pdf_path)
+
+    # ── EXPAND: content fits but doesn't fill the page ────────────────
+    if pages <= max_pages:
+        remaining = _get_remaining_space_pt(latex_code, max_pages)
+
+        if remaining > 8.0:  # more than ~3mm of blank space at bottom
+            # Binary-search spacing multiplier from 1.0 up
+            best_path_expand = pdf_path
+            best_code_expand = latex_code
+            lo, hi = 1.0, 5.0
+
+            for _ in range(10):
+                mid = (lo + hi) / 2
+                candidate = _apply_spacing_multiplier(latex_code, mid)
+                tp = compile_latex(candidate)
+                tp_pages = get_pdf_page_count(tp)
+                if tp_pages <= max_pages:
+                    shutil.rmtree(os.path.dirname(best_path_expand), ignore_errors=True)
+                    best_path_expand = tp
+                    best_code_expand = candidate
+                    lo = mid
+                else:
+                    shutil.rmtree(os.path.dirname(tp), ignore_errors=True)
+                    hi = mid
+
+            latex_code = best_code_expand
+            shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+            pdf_path = best_path_expand
+
+            # Final pass: distribute residual space proportionally
+            remaining = _get_remaining_space_pt(latex_code, max_pages)
+            if remaining > 6.0:
+                # Count section gaps (between sections) where we can add space
+                section_positions = [m.start() for m in re.finditer(r"\\section\{", latex_code)]
+                num_gaps = len(section_positions) - 1  # gaps between sections
+
+                if num_gaps > 0:
+                    # Calculate per-gap vspace to distribute
+                    # Use 80% of remaining for between-section gaps, keep 20% for bottom
+                    distribute = remaining * 0.85
+                    per_gap_pt = distribute / num_gaps
+                    bottom_pt = remaining - distribute
+
+                    # Cap per-gap to avoid ugly huge gaps (max ~18pt = ~6mm)
+                    max_gap_pt = 18.0
+                    if per_gap_pt > max_gap_pt:
+                        per_gap_pt = max_gap_pt
+                        distribute = per_gap_pt * num_gaps
+                        bottom_pt = remaining - distribute
+
+                    # Insert calculated \vspace before each section except the first
+                    parts = re.split(r"(\\section\{)", latex_code)
+                    rebuilt = parts[0]
+                    section_idx = 0
+                    section_marker = "\\section{"
+                    for i in range(1, len(parts)):
+                        if parts[i] == section_marker:
+                            if section_idx > 0:
+                                rebuilt += f"\\vspace{{{per_gap_pt:.1f}pt}}\n"
+                            section_idx += 1
+                        rebuilt += parts[i]
+
+                    # Add remaining space at bottom
+                    if bottom_pt > 2.0:
+                        rebuilt = rebuilt.replace(
+                            "\\end{document}",
+                            f"\\vspace{{\\fill}}\n\\end{{document}}"
+                        )
+
+                    tp = compile_latex(rebuilt)
+                    if get_pdf_page_count(tp) <= max_pages:
+                        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+                        pdf_path = tp
+                        latex_code = rebuilt
+
+                        # If still significant space left, binary-search a larger per_gap
+                        remaining2 = _get_remaining_space_pt(latex_code, max_pages)
+                        if remaining2 > 15.0 and per_gap_pt < max_gap_pt:
+                            # Try increasing per_gap further
+                            lo2, hi2 = per_gap_pt, per_gap_pt + remaining2 / max(num_gaps, 1)
+                            for _ in range(6):
+                                mid2 = (lo2 + hi2) / 2
+                                parts2 = re.split(r"(\\section\{)", best_code_expand)
+                                rebuilt2 = parts2[0]
+                                si2 = 0
+                                for j in range(1, len(parts2)):
+                                    if parts2[j] == section_marker:
+                                        if si2 > 0:
+                                            rebuilt2 += f"\\vspace{{{mid2:.1f}pt}}\n"
+                                        si2 += 1
+                                    rebuilt2 += parts2[j]
+                                rebuilt2 = rebuilt2.replace(
+                                    "\\end{document}",
+                                    f"\\vspace{{\\fill}}\n\\end{{document}}"
+                                )
+                                tp2 = compile_latex(rebuilt2)
+                                if get_pdf_page_count(tp2) <= max_pages:
+                                    shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+                                    pdf_path = tp2
+                                    latex_code = rebuilt2
+                                    lo2 = mid2
+                                else:
+                                    shutil.rmtree(os.path.dirname(tp2), ignore_errors=True)
+                                    hi2 = mid2
+                    else:
+                        shutil.rmtree(os.path.dirname(tp), ignore_errors=True)
 
     return pdf_path
 
