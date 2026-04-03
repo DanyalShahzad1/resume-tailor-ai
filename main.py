@@ -124,7 +124,7 @@ WHAT YOU MUST KEEP THE SAME:
 - Same sections, same roles, same number of bullet points per role. Do NOT add or remove bullets.
 - All facts, numbers, metrics, percentages, dates, and company names stay unchanged.
 - Same order of roles and sections as the original.
-- Keep each bullet APPROXIMATELY the same length as the original (within a few words). Do not make bullets significantly longer.
+- Keep each bullet APPROXIMATELY the same length as the original. If anything, make bullets SLIGHTLY longer (add a relevant keyword or two) rather than shorter. The resume must fill the full page.
 
 CRITICAL OUTPUT FORMAT:
 1. First output a JSON block with name and contact info:
@@ -162,12 +162,13 @@ WHAT YOU DO:
 
 STRUCTURE FOR 2-PAGE RESUME:
 - Keep Education concise (degrees, institutions, dates — no bullets needed unless very relevant).
-- Most recent/relevant roles: 4-5 strong bullet points each.
-- Older or less relevant roles: 1-2 bullet points each, or combine into a brief "Earlier Career" section.
-- Projects & Leadership: keep only the most impressive and job-relevant ones.
+- Most recent/relevant roles: 5-6 strong bullet points each, each 1.5-2 lines long.
+- Older or less relevant roles: 2-3 bullet points each.
+- Projects & Leadership: keep the most impressive and job-relevant ones with 2-3 bullets each.
 - Technical Skills: 2-3 focused category lines matching the job description.
 - You MAY remove sections or roles that are completely irrelevant to the target job.
 - Keep roles in reverse chronological order within each section.
+- The resume MUST fill BOTH pages fully. Do not leave large blank space on page 2. If needed, include more roles, expand bullets with additional relevant detail, or add more bullet points to key roles.
 
 WHAT YOU MUST KEEP:
 - All facts, numbers, metrics, percentages, dates, and company names must be truthful.
@@ -264,36 +265,67 @@ def compile_latex(latex_code: str) -> str:
 
 
 def compile_latex_fit_pages(latex_code: str, max_pages: int = 1) -> str:
-    """Compile LaTeX and auto-shrink if it exceeds max_pages."""
+    """Compile LaTeX, auto-shrink if over max_pages, auto-expand if under max_pages."""
     pdf_path = compile_latex(latex_code)
     pages = get_pdf_page_count(pdf_path)
 
-    if pages <= max_pages:
+    # === SHRINK if over max_pages ===
+    if pages > max_pages:
+        shrink_attempts = [
+            (r"\itemsep=0.6pt", r"\itemsep=0pt"),
+            (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}", r"\titlespacing*{\section}{0pt}{0.08cm}{0.04cm}"),
+            (r"\vspace{0.04cm}", r"\vspace{0.01cm}"),
+            (r"top=0.65cm,bottom=0.65cm", r"top=0.5cm,bottom=0.5cm"),
+            (r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.01cm}"),
+        ]
+
+        modified = latex_code
+        for old, new in shrink_attempts:
+            modified = modified.replace(old, new)
+            shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+            pdf_path = compile_latex(modified)
+            pages = get_pdf_page_count(pdf_path)
+            if pages <= max_pages:
+                return pdf_path
+
+        # Last resort: scale down with \small
+        if pages > max_pages:
+            modified = modified.replace(r"\begin{document}", r"\begin{document}\small")
+            shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+            pdf_path = compile_latex(modified)
         return pdf_path
 
-    # Progressively shrink spacing and font size
-    shrink_attempts = [
-        (r"\itemsep=0.6pt", r"\itemsep=0pt"),
-        (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}", r"\titlespacing*{\section}{0pt}{0.08cm}{0.04cm}"),
-        (r"\vspace{0.04cm}", r"\vspace{0.01cm}"),
-        (r"top=0.65cm,bottom=0.65cm", r"top=0.5cm,bottom=0.5cm"),
-        (r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.01cm}"),
-    ]
+    # === EXPAND if under max_pages (content doesn't fill target) ===
+    if pages < max_pages:
+        expand_attempts = [
+            # Attempt 1: increase item spacing
+            (r"\itemsep=0.6pt", r"\itemsep=2pt"),
+            # Attempt 2: increase section spacing
+            (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}", r"\titlespacing*{\section}{0pt}{0.25cm}{0.12cm}"),
+            # Attempt 3: increase role spacing
+            (r"\vspace{0.04cm}", r"\vspace{0.12cm}"),
+            # Attempt 4: increase base role vspace
+            (r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.08cm}"),
+            # Attempt 5: increase margins slightly
+            (r"top=0.65cm,bottom=0.65cm", r"top=0.85cm,bottom=0.85cm"),
+        ]
 
-    modified = latex_code
-    for old, new in shrink_attempts:
-        modified = modified.replace(old, new)
-        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
-        pdf_path = compile_latex(modified)
-        pages = get_pdf_page_count(pdf_path)
-        if pages <= max_pages:
-            return pdf_path
+        modified = latex_code
+        for old, new in expand_attempts:
+            prev_path = pdf_path
+            test_modified = modified.replace(old, new)
+            test_path = compile_latex(test_modified)
+            test_pages = get_pdf_page_count(test_path)
+            if test_pages <= max_pages:
+                # This expansion still fits, keep it
+                modified = test_modified
+                shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+                pdf_path = test_path
+            else:
+                # This expansion pushed it over, skip it
+                shutil.rmtree(os.path.dirname(test_path), ignore_errors=True)
 
-    # Last resort: scale down with \small
-    if pages > max_pages:
-        modified = modified.replace(r"\begin{document}", r"\begin{document}\small")
-        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
-        pdf_path = compile_latex(modified)
+        return pdf_path
 
     return pdf_path
 
