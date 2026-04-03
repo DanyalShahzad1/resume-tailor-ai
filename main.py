@@ -710,4 +710,316 @@ Fix it so it compiles. Output ONLY the corrected LaTeX body starting from \\sect
         return JSONResponse(content={"success": False, "pdf_base64": None, "latex": "", "error": f"Server error: {str(e)}"})
 
 
+# ── LaTeX → DOCX Conversion ─────────────────────────────────────────
+def _unescape_latex(text: str) -> str:
+    """Convert LaTeX escaped characters back to plain text."""
+    text = text.replace(r"\$", "$")
+    text = text.replace(r"\%", "%")
+    text = text.replace(r"\&", "&")
+    text = text.replace(r"\#", "#")
+    text = text.replace(r"\~", "~")
+    text = text.replace("~", " ")
+    text = text.replace(r"\,", " ")
+    text = text.replace(r"--", "–")
+    text = text.replace(r"---", "—")
+    # Remove remaining LaTeX commands we don't handle
+    text = re.sub(r"\\textbf\{([^}]*)\}", r"\1", text)
+    text = re.sub(r"\\textit\{([^}]*)\}", r"\1", text)
+    text = re.sub(r"\\emph\{([^}]*)\}", r"\1", text)
+    # Handle \href{url}{text} → text
+    text = re.sub(r"\\href\{[^}]*\}\{([^}]*)\}", r"\1", text)
+    return text.strip()
+
+
+def _parse_latex_body(latex_code: str):
+    """Parse LaTeX resume into structured data for DOCX generation.
+
+    Returns: (name, contact_text, sections)
+    where sections is a list of:
+      {"title": str, "entries": [{"role_line1": str, "role_line2": str,
+        "date": str, "extra": str, "bullets": [str]}]}
+    """
+    # Extract name from pdftitle or \textbf in header
+    name = "Candidate"
+    name_m = re.search(r"pdftitle=\{(.+?)\s*--", latex_code)
+    if name_m:
+        name = name_m.group(1).strip()
+    else:
+        name_m = re.search(r"fontsize\{21pt\}.*?\\textbf\{(.+?)\}", latex_code)
+        if name_m:
+            name = name_m.group(1).strip()
+
+    # Extract contact line (raw, between header center and \end{center})
+    contact_text = ""
+    contact_m = re.search(
+        r"\\selectfont\s*\\textbf\{[^}]+\}\}\\\\.*?\n\s*(.+?)\n\s*\\end\{center\}",
+        latex_code, re.DOTALL,
+    )
+    if contact_m:
+        raw_contact = contact_m.group(1).strip()
+        contact_text = _unescape_latex(raw_contact)
+        contact_text = re.sub(r"\s*\|\s*", " | ", contact_text)
+        contact_text = re.sub(r"\s+", " ", contact_text).strip()
+
+    # Get the body (everything between \header and \end{document})
+    body_m = re.search(r"\\header\s*\n(.*?)\\end\{document\}", latex_code, re.DOTALL)
+    if not body_m:
+        body_m = re.search(r"\\begin\{document\}.*?\\header\s*\n(.*?)\\end\{document\}", latex_code, re.DOTALL)
+    body = body_m.group(1) if body_m else ""
+
+    # Remove any \vspace{...} or \vfill inserted by the page-fitting algorithm
+    body = re.sub(r"\\vfill\s*\n?", "", body)
+    body = re.sub(r"\\vspace\{[^}]+\}\s*\n?", "", body)
+
+    # Split into sections
+    section_splits = re.split(r"\\section\{([^}]+)\}", body)
+    # section_splits[0] is content before first section (usually empty)
+    # then alternating: section_title, section_content, section_title, ...
+
+    sections = []
+    for i in range(1, len(section_splits), 2):
+        sec_title = _unescape_latex(section_splits[i])
+        sec_content = section_splits[i + 1] if i + 1 < len(section_splits) else ""
+
+        entries = []
+
+        # Find all \role and \nextrole commands
+        role_pattern = r"\\(?:next)?role\{([^}]*)\}\{([^}]*)\}\{([^}]*)\}\{([^}]*)\}"
+        role_matches = list(re.finditer(role_pattern, sec_content))
+
+        if role_matches:
+            for j, rm in enumerate(role_matches):
+                role_line1 = _unescape_latex(rm.group(1))  # Title | Company
+                date = _unescape_latex(rm.group(2))
+                role_line2 = _unescape_latex(rm.group(3))  # Location
+                extra = _unescape_latex(rm.group(4))  # e.g. GPA, league
+
+                # Get content between this role and the next (or section end)
+                start = rm.end()
+                end = role_matches[j + 1].start() if j + 1 < len(role_matches) else len(sec_content)
+                role_content = sec_content[start:end]
+
+                # Extract bullets
+                bullets = []
+                for item_m in re.finditer(r"\\item\s+(.+?)(?=\\item|\s*\\end\{highlights\}|$)",
+                                          role_content, re.DOTALL):
+                    bullet_text = _unescape_latex(item_m.group(1).strip())
+                    bullet_text = re.sub(r"\s+", " ", bullet_text)
+                    if bullet_text:
+                        bullets.append(bullet_text)
+
+                entries.append({
+                    "role_line1": role_line1,
+                    "date": date,
+                    "role_line2": role_line2,
+                    "extra": extra,
+                    "bullets": bullets,
+                })
+        else:
+            # No roles — probably Technical Skills or plain text section
+            plain_text = sec_content.strip()
+            # Parse \textbf{Category:} text\\[2pt] lines
+            skill_lines = re.findall(
+                r"\\textbf\{([^}]+)\}\s*(.+?)(?=\\textbf\{|\\\\|$)", plain_text, re.DOTALL
+            )
+            if skill_lines:
+                for cat, content in skill_lines:
+                    content = _unescape_latex(content.strip().rstrip("\\").strip())
+                    entries.append({
+                        "role_line1": "",
+                        "date": "",
+                        "role_line2": "",
+                        "extra": "",
+                        "bullets": [],
+                        "skill_category": _unescape_latex(cat),
+                        "skill_content": content,
+                    })
+            else:
+                # Fallback: treat as plain text
+                plain = _unescape_latex(plain_text)
+                plain = re.sub(r"\\\\(\[[\d.]+pt\])?", "\n", plain)
+                if plain.strip():
+                    entries.append({
+                        "role_line1": "", "date": "", "role_line2": "",
+                        "extra": "", "bullets": [],
+                        "plain_text": plain.strip(),
+                    })
+
+        sections.append({"title": sec_title, "entries": entries})
+
+    return name, contact_text, sections
+
+
+def latex_to_docx(latex_code: str) -> str:
+    """Convert LaTeX resume to a DOCX file. Returns path to the generated .docx."""
+    from docx import Document as DocxDocument
+    from docx.shared import Pt, Inches, Cm, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
+    from docx.oxml.ns import qn
+
+    name, contact_text, sections = _parse_latex_body(latex_code)
+
+    doc = DocxDocument()
+
+    # ── Page setup: Letter, tight margins matching the LaTeX ──
+    section = doc.sections[0]
+    section.page_width = Inches(8.5)
+    section.page_height = Inches(11)
+    section.top_margin = Cm(0.65)
+    section.bottom_margin = Cm(0.65)
+    section.left_margin = Cm(0.9)
+    section.right_margin = Cm(0.9)
+
+    # ── Style definitions ──
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(10)
+    style.paragraph_format.space_before = Pt(0)
+    style.paragraph_format.space_after = Pt(0)
+    style.paragraph_format.line_spacing = Pt(12)
+
+    # ── Name header ──
+    name_para = doc.add_paragraph()
+    name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    name_para.paragraph_format.space_after = Pt(2)
+    name_run = name_para.add_run(name)
+    name_run.bold = True
+    name_run.font.size = Pt(20)
+    name_run.font.name = "Calibri"
+
+    # ── Contact line ──
+    if contact_text:
+        contact_para = doc.add_paragraph()
+        contact_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        contact_para.paragraph_format.space_after = Pt(4)
+        contact_run = contact_para.add_run(contact_text)
+        contact_run.font.size = Pt(10)
+        contact_run.font.name = "Calibri"
+
+    # ── Sections ──
+    for sec in sections:
+        # Section heading with bottom border
+        heading_para = doc.add_paragraph()
+        heading_para.paragraph_format.space_before = Pt(6)
+        heading_para.paragraph_format.space_after = Pt(3)
+        heading_run = heading_para.add_run(sec["title"])
+        heading_run.bold = True
+        heading_run.font.size = Pt(12)
+        heading_run.font.name = "Calibri"
+
+        # Add bottom border to section heading
+        pPr = heading_para._p.get_or_add_pPr()
+        pBdr = pPr.makeelement(qn("w:pBdr"), {})
+        bottom = pBdr.makeelement(qn("w:bottom"), {
+            qn("w:val"): "single",
+            qn("w:sz"): "6",
+            qn("w:space"): "1",
+            qn("w:color"): "000000",
+        })
+        pBdr.append(bottom)
+        pPr.append(pBdr)
+
+        for entry in sec["entries"]:
+            # ── Skill lines (Technical Skills section) ──
+            if entry.get("skill_category"):
+                skill_para = doc.add_paragraph()
+                skill_para.paragraph_format.space_before = Pt(1)
+                skill_para.paragraph_format.space_after = Pt(1)
+                cat_run = skill_para.add_run(entry["skill_category"] + " ")
+                cat_run.bold = True
+                cat_run.font.size = Pt(10)
+                cat_run.font.name = "Calibri"
+                content_run = skill_para.add_run(entry["skill_content"])
+                content_run.font.size = Pt(10)
+                content_run.font.name = "Calibri"
+                continue
+
+            # ── Plain text fallback ──
+            if entry.get("plain_text"):
+                plain_para = doc.add_paragraph()
+                plain_para.paragraph_format.space_before = Pt(1)
+                plain_run = plain_para.add_run(entry["plain_text"])
+                plain_run.font.size = Pt(10)
+                plain_run.font.name = "Calibri"
+                continue
+
+            # ── Role entry with tabbed layout ──
+            if entry["role_line1"]:
+                # Line 1: Role/Title (bold) ... Date (bold italic, right-aligned)
+                role_para1 = doc.add_paragraph()
+                role_para1.paragraph_format.space_before = Pt(3)
+                role_para1.paragraph_format.space_after = Pt(0)
+
+                # Add right tab stop at page content width
+                content_width_twips = int((8.5 * 2.54 - 0.9 * 2) / 2.54 * 1440)
+                tab_stops = role_para1.paragraph_format.tab_stops
+                tab_stops.add_tab_stop(Pt(content_width_twips / 20),
+                                       alignment=WD_TAB_ALIGNMENT.RIGHT)
+
+                title_run = role_para1.add_run(entry["role_line1"])
+                title_run.bold = True
+                title_run.font.size = Pt(10)
+                title_run.font.name = "Calibri"
+
+                if entry["date"]:
+                    role_para1.add_run("\t")
+                    date_run = role_para1.add_run(entry["date"])
+                    date_run.bold = True
+                    date_run.italic = True
+                    date_run.font.size = Pt(10)
+                    date_run.font.name = "Calibri"
+
+                # Line 2: Location (italic) ... Extra (italic, right-aligned)
+                if entry["role_line2"] or entry["extra"]:
+                    role_para2 = doc.add_paragraph()
+                    role_para2.paragraph_format.space_before = Pt(0)
+                    role_para2.paragraph_format.space_after = Pt(1)
+                    tab_stops2 = role_para2.paragraph_format.tab_stops
+                    tab_stops2.add_tab_stop(Pt(content_width_twips / 20),
+                                            alignment=WD_TAB_ALIGNMENT.RIGHT)
+
+                    if entry["role_line2"]:
+                        loc_run = role_para2.add_run(entry["role_line2"])
+                        loc_run.italic = True
+                        loc_run.font.size = Pt(10)
+                        loc_run.font.name = "Calibri"
+
+                    if entry["extra"]:
+                        role_para2.add_run("\t")
+                        extra_run = role_para2.add_run(entry["extra"])
+                        extra_run.italic = True
+                        extra_run.font.size = Pt(10)
+                        extra_run.font.name = "Calibri"
+
+            # ── Bullet points ──
+            for bullet_text in entry["bullets"]:
+                bullet_para = doc.add_paragraph(style="List Bullet")
+                bullet_para.paragraph_format.space_before = Pt(0.5)
+                bullet_para.paragraph_format.space_after = Pt(0.5)
+                bullet_para.paragraph_format.left_indent = Pt(11)
+                bullet_para.paragraph_format.first_line_indent = Pt(-11)
+                bullet_run = bullet_para.add_run(bullet_text)
+                bullet_run.font.size = Pt(10)
+                bullet_run.font.name = "Calibri"
+
+    # Save to temp file
+    tmpdir = tempfile.mkdtemp()
+    docx_path = os.path.join(tmpdir, "tailored_resume.docx")
+    doc.save(docx_path)
+    return docx_path
+
+
+@app.post("/api/download-docx")
+async def download_docx(latex: str = Form(...)):
+    """Convert the stored LaTeX to a DOCX and return as base64."""
+    try:
+        docx_path = latex_to_docx(latex)
+        with open(docx_path, "rb") as f:
+            docx_base64 = base64.b64encode(f.read()).decode("utf-8")
+        shutil.rmtree(os.path.dirname(docx_path), ignore_errors=True)
+        return JSONResponse(content={"success": True, "docx_base64": docx_base64})
+    except Exception as e:
+        return JSONResponse(content={"success": False, "error": f"DOCX conversion failed: {str(e)}"})
+
+
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
