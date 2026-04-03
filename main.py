@@ -857,7 +857,7 @@ def _build_docx(name, contact_text, sections, spacing_mult=1.0, font_size_pt=10.
     font_size_pt controls the body font size (default 10pt).
     """
     from docx import Document as DocxDocument
-    from docx.shared import Pt, Inches, Cm
+    from docx.shared import Pt, Inches, Cm, Emu
     from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
     from docx.oxml.ns import qn
 
@@ -871,11 +871,33 @@ def _build_docx(name, contact_text, sections, spacing_mult=1.0, font_size_pt=10.
     sec = doc.sections[0]
     sec.page_width = Inches(8.5)
     sec.page_height = Inches(11)
-    margin_cm = max(0.5, 0.9 * spacing_mult) if spacing_mult < 0.85 else 0.9
-    sec.top_margin = Cm(max(0.4, 0.65 * spacing_mult)) if spacing_mult < 0.85 else Cm(0.65)
-    sec.bottom_margin = Cm(max(0.4, 0.65 * spacing_mult)) if spacing_mult < 0.85 else Cm(0.65)
-    sec.left_margin = Cm(margin_cm)
-    sec.right_margin = Cm(margin_cm)
+    lr_margin_cm = 0.9
+    tb_margin_cm = 0.65
+    if spacing_mult < 0.85:
+        lr_margin_cm = max(0.6, 0.9 * spacing_mult)
+        tb_margin_cm = max(0.45, 0.65 * spacing_mult)
+    sec.top_margin = Cm(tb_margin_cm)
+    sec.bottom_margin = Cm(tb_margin_cm)
+    sec.left_margin = Cm(lr_margin_cm)
+    sec.right_margin = Cm(lr_margin_cm)
+    # CRITICAL: Set header/footer distance to 0 to prevent the default
+    # 0.5in header distance from pushing content down when top_margin < 0.5in
+    sec.header_distance = Emu(0)
+    sec.footer_distance = Emu(0)
+
+    # ── Clear default header/footer content ──
+    try:
+        if sec.header:
+            for p in sec.header.paragraphs:
+                p.clear()
+        if sec.footer:
+            for p in sec.footer.paragraphs:
+                p.clear()
+    except Exception:
+        pass
+
+    # ── Exact line spacing — key to matching LaTeX density ──
+    line_sp = max(font_size_pt + 0.5, (font_size_pt + 2) * spacing_mult)
 
     # ── Style definitions ──
     style = doc.styles["Normal"]
@@ -883,14 +905,38 @@ def _build_docx(name, contact_text, sections, spacing_mult=1.0, font_size_pt=10.
     style.font.size = Pt(font_size_pt)
     style.paragraph_format.space_before = Pt(0)
     style.paragraph_format.space_after = Pt(0)
-    line_sp = max(font_size_pt + 1, (font_size_pt + 2) * spacing_mult)
+    style.paragraph_format.left_indent = Pt(0)
+    style.paragraph_format.first_line_indent = Pt(0)
     style.paragraph_format.line_spacing = Pt(line_sp)
+
+    # Fix List Bullet style
+    try:
+        lb_style = doc.styles["List Bullet"]
+        lb_style.paragraph_format.left_indent = Pt(14)
+        lb_style.paragraph_format.first_line_indent = Pt(-14)
+        lb_style.paragraph_format.space_before = Pt(0)
+        lb_style.paragraph_format.space_after = Pt(0)
+        lb_style.paragraph_format.line_spacing = Pt(line_sp)
+        lb_style.font.size = Pt(font_size_pt)
+        lb_style.font.name = "Calibri"
+    except Exception:
+        pass
+
+    # ── Content width for right-aligned tab stops ──
+    content_width_inches = 8.5 - (lr_margin_cm * 2 / 2.54)
+    tab_pos = Inches(content_width_inches)
+
+    # ── Helper to set line spacing on every paragraph ──
+    def apply_line_spacing(para):
+        para.paragraph_format.line_spacing = Pt(line_sp)
 
     # ── Name header ──
     name_sz = max(14, round(20 * min(spacing_mult, 1.0)))
     name_para = doc.add_paragraph()
     name_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    name_para.paragraph_format.space_after = sp(2)
+    name_para.paragraph_format.space_before = Pt(0)
+    name_para.paragraph_format.space_after = sp(1)
+    apply_line_spacing(name_para)
     name_run = name_para.add_run(name)
     name_run.bold = True
     name_run.font.size = Pt(name_sz)
@@ -900,24 +946,22 @@ def _build_docx(name, contact_text, sections, spacing_mult=1.0, font_size_pt=10.
     if contact_text:
         contact_para = doc.add_paragraph()
         contact_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        contact_para.paragraph_format.space_after = sp(4)
+        contact_para.paragraph_format.space_before = Pt(0)
+        contact_para.paragraph_format.space_after = sp(2)
+        apply_line_spacing(contact_para)
         contact_run = contact_para.add_run(contact_text)
         contact_run.font.size = Pt(font_size_pt)
         contact_run.font.name = "Calibri"
-
-    # ── Content width for tab stops ──
-    left_m = margin_cm
-    right_m = margin_cm
-    content_width_twips = int((8.5 * 2.54 - left_m - right_m) / 2.54 * 1440)
-    tab_pos = Pt(content_width_twips / 20)
 
     # ── Sections ──
     for section_data in sections:
         # Section heading with bottom border
         heading_para = doc.add_paragraph()
-        heading_para.paragraph_format.space_before = sp(6)
-        heading_para.paragraph_format.space_after = sp(2)
-        heading_sz = max(font_size_pt + 1, round(12 * min(spacing_mult, 1.0)))
+        heading_para.paragraph_format.space_before = sp(4)
+        heading_para.paragraph_format.space_after = sp(1)
+        heading_para.paragraph_format.left_indent = Pt(0)
+        apply_line_spacing(heading_para)
+        heading_sz = max(font_size_pt + 0.5, round(11.5 * min(spacing_mult, 1.0)))
         heading_run = heading_para.add_run(section_data["title"])
         heading_run.bold = True
         heading_run.font.size = Pt(heading_sz)
@@ -926,19 +970,21 @@ def _build_docx(name, contact_text, sections, spacing_mult=1.0, font_size_pt=10.
         # Bottom border
         pPr = heading_para._p.get_or_add_pPr()
         pBdr = pPr.makeelement(qn("w:pBdr"), {})
-        bottom = pBdr.makeelement(qn("w:bottom"), {
-            qn("w:val"): "single", qn("w:sz"): "6",
+        bdr_bottom = pBdr.makeelement(qn("w:bottom"), {
+            qn("w:val"): "single", qn("w:sz"): "4",
             qn("w:space"): "1", qn("w:color"): "000000",
         })
-        pBdr.append(bottom)
+        pBdr.append(bdr_bottom)
         pPr.append(pBdr)
 
         for entry in section_data["entries"]:
             # ── Skill lines ──
             if entry.get("skill_category"):
                 skill_para = doc.add_paragraph()
-                skill_para.paragraph_format.space_before = sp(0.5)
-                skill_para.paragraph_format.space_after = sp(0.5)
+                skill_para.paragraph_format.space_before = sp(0.3)
+                skill_para.paragraph_format.space_after = sp(0.3)
+                skill_para.paragraph_format.left_indent = Pt(0)
+                apply_line_spacing(skill_para)
                 cat_run = skill_para.add_run(entry["skill_category"] + " ")
                 cat_run.bold = True
                 cat_run.font.size = Pt(font_size_pt)
@@ -951,7 +997,9 @@ def _build_docx(name, contact_text, sections, spacing_mult=1.0, font_size_pt=10.
             # ── Plain text fallback ──
             if entry.get("plain_text"):
                 plain_para = doc.add_paragraph()
-                plain_para.paragraph_format.space_before = sp(1)
+                plain_para.paragraph_format.space_before = sp(0.5)
+                plain_para.paragraph_format.left_indent = Pt(0)
+                apply_line_spacing(plain_para)
                 plain_run = plain_para.add_run(entry["plain_text"])
                 plain_run.font.size = Pt(font_size_pt)
                 plain_run.font.name = "Calibri"
@@ -960,8 +1008,10 @@ def _build_docx(name, contact_text, sections, spacing_mult=1.0, font_size_pt=10.
             # ── Role entry ──
             if entry["role_line1"]:
                 role_para1 = doc.add_paragraph()
-                role_para1.paragraph_format.space_before = sp(2)
+                role_para1.paragraph_format.space_before = sp(1.5)
                 role_para1.paragraph_format.space_after = Pt(0)
+                role_para1.paragraph_format.left_indent = Pt(0)
+                apply_line_spacing(role_para1)
                 role_para1.paragraph_format.tab_stops.add_tab_stop(
                     tab_pos, alignment=WD_TAB_ALIGNMENT.RIGHT)
 
@@ -981,7 +1031,9 @@ def _build_docx(name, contact_text, sections, spacing_mult=1.0, font_size_pt=10.
                 if entry["role_line2"] or entry["extra"]:
                     role_para2 = doc.add_paragraph()
                     role_para2.paragraph_format.space_before = Pt(0)
-                    role_para2.paragraph_format.space_after = sp(0.5)
+                    role_para2.paragraph_format.space_after = sp(0.3)
+                    role_para2.paragraph_format.left_indent = Pt(0)
+                    apply_line_spacing(role_para2)
                     role_para2.paragraph_format.tab_stops.add_tab_stop(
                         tab_pos, alignment=WD_TAB_ALIGNMENT.RIGHT)
 
@@ -1002,10 +1054,10 @@ def _build_docx(name, contact_text, sections, spacing_mult=1.0, font_size_pt=10.
             for bullet_text in entry["bullets"]:
                 bullet_para = doc.add_paragraph(style="List Bullet")
                 bullet_para.paragraph_format.space_before = Pt(0)
-                bullet_para.paragraph_format.space_after = sp(0.3)
-                bullet_para.paragraph_format.left_indent = Pt(11)
-                bullet_para.paragraph_format.first_line_indent = Pt(-11)
-                bullet_para.paragraph_format.line_spacing = Pt(line_sp)
+                bullet_para.paragraph_format.space_after = sp(0.2)
+                bullet_para.paragraph_format.left_indent = Pt(14)
+                bullet_para.paragraph_format.first_line_indent = Pt(-14)
+                apply_line_spacing(bullet_para)
                 bullet_run = bullet_para.add_run(bullet_text)
                 bullet_run.font.size = Pt(font_size_pt)
                 bullet_run.font.name = "Calibri"
