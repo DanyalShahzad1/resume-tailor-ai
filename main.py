@@ -149,6 +149,53 @@ ESCAPING RULES (CRITICAL - follow exactly):
 - Underscore in URLs is fine inside \href{}
 """
 
+SYSTEM_PROMPT_2PAGE = r"""You are an elite resume tailoring expert for senior and executive-level candidates. Your job is to tailor a lengthy resume down to a focused, compelling 2-page resume targeted at a specific job description.
+
+WHAT YOU DO:
+- Read the job description and deeply understand what they're looking for.
+- From the candidate's full experience, SELECT the most relevant and impactful roles, projects, and achievements for this specific job.
+- REWRITE each selected bullet point so it directly mirrors the job description's language and priorities.
+- Use the job description's EXACT phrases, terminology, and action verbs throughout.
+- Front-load each bullet with the most job-relevant keyword or phrase.
+- For very experienced candidates (10+ years), focus on the last 10-15 years of experience. Older roles can be condensed to 1-2 bullets or a brief mention.
+- Prioritize leadership, strategic impact, and quantified results that match the target role's seniority level.
+
+STRUCTURE FOR 2-PAGE RESUME:
+- Keep Education concise (degrees, institutions, dates — no bullets needed unless very relevant).
+- Most recent/relevant roles: 4-5 strong bullet points each.
+- Older or less relevant roles: 1-2 bullet points each, or combine into a brief "Earlier Career" section.
+- Projects & Leadership: keep only the most impressive and job-relevant ones.
+- Technical Skills: 2-3 focused category lines matching the job description.
+- You MAY remove sections or roles that are completely irrelevant to the target job.
+- Keep roles in reverse chronological order within each section.
+
+WHAT YOU MUST KEEP:
+- All facts, numbers, metrics, percentages, dates, and company names must be truthful.
+- Never invent or fabricate experience, achievements, or metrics.
+
+CRITICAL OUTPUT FORMAT:
+1. First output a JSON block with name and contact info:
+```json
+{"name": "Full Name", "contact_line": "phone \\,|\\, \\href{mailto:email}{email} \\,|\\, \\href{url}{url}"}
+```
+
+2. Then output ONLY the LaTeX BODY content. Do NOT include \documentclass, \usepackage, \begin{document}, \end{document}, or \header.
+
+LATEX COMMANDS TO USE:
+- \section{Title}
+- \role{Title | Company}{Dates}{Location}{Detail}  (first entry in section)
+- \nextrole{Title | Company}{Dates}{Location}{Detail}  (subsequent entries)
+- \begin{highlights} \item bullet text \end{highlights}
+- \textbf{Category:} text\\[2pt]  (for Technical Skills)
+
+ESCAPING RULES (CRITICAL - follow exactly):
+- Dollar amounts: \$20M  (backslash before $)
+- Ampersand in names: FP\&A, SG\&A  (backslash before &)
+- Percent sign: 15\%  (backslash before %)
+- Hash: \#
+- Underscore in URLs is fine inside \href{}
+"""
+
 
 async def call_claude(system_prompt: str, user_message: str) -> str:
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -216,26 +263,20 @@ def compile_latex(latex_code: str) -> str:
     return pdf_path
 
 
-def compile_latex_single_page(latex_code: str) -> str:
-    """Compile LaTeX and auto-shrink if it exceeds 1 page."""
-    # Try compiling as-is first
+def compile_latex_fit_pages(latex_code: str, max_pages: int = 1) -> str:
+    """Compile LaTeX and auto-shrink if it exceeds max_pages."""
     pdf_path = compile_latex(latex_code)
     pages = get_pdf_page_count(pdf_path)
 
-    if pages <= 1:
+    if pages <= max_pages:
         return pdf_path
 
-    # If over 1 page, progressively shrink by adjusting spacing and font size
+    # Progressively shrink spacing and font size
     shrink_attempts = [
-        # Attempt 1: tighten item spacing
         (r"\itemsep=0.6pt", r"\itemsep=0pt"),
-        # Attempt 2: tighten section spacing
         (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}", r"\titlespacing*{\section}{0pt}{0.08cm}{0.04cm}"),
-        # Attempt 3: tighten role spacing
         (r"\vspace{0.04cm}", r"\vspace{0.01cm}"),
-        # Attempt 4: tighten top/bottom margins
         (r"top=0.65cm,bottom=0.65cm", r"top=0.5cm,bottom=0.5cm"),
-        # Attempt 5: reduce base role vspace
         (r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.01cm}"),
     ]
 
@@ -245,11 +286,11 @@ def compile_latex_single_page(latex_code: str) -> str:
         shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
         pdf_path = compile_latex(modified)
         pages = get_pdf_page_count(pdf_path)
-        if pages <= 1:
+        if pages <= max_pages:
             return pdf_path
 
-    # Last resort: scale the entire content down with \small
-    if pages > 1:
+    # Last resort: scale down with \small
+    if pages > max_pages:
         modified = modified.replace(r"\begin{document}", r"\begin{document}\small")
         shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
         pdf_path = compile_latex(modified)
@@ -323,10 +364,43 @@ def build_full_latex(name: str, contact_line: str, body: str) -> str:
     return full
 
 
+@app.post("/api/check-resume")
+async def check_resume(
+    resume_text: str = Form(...),
+):
+    """Check the uploaded resume and estimate its page count."""
+    try:
+        is_pdf = resume_text.startswith("[PDF_BASE64]:")
+
+        if is_pdf:
+            b64_data = resume_text[len("[PDF_BASE64]:"):]
+            # Get actual page count from PDF
+            tmpdir = tempfile.mkdtemp()
+            pdf_path = os.path.join(tmpdir, "check.pdf")
+            with open(pdf_path, "wb") as f:
+                f.write(base64.b64decode(b64_data))
+            pages = get_pdf_page_count(pdf_path)
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return JSONResponse(content={"pages": pages})
+        else:
+            # For text/tex files, estimate based on content length
+            # A typical 1-page resume in this template is ~2000-3500 chars
+            char_count = len(resume_text.strip())
+            if char_count > 4000:
+                estimated_pages = min(int(char_count / 2800) + 1, 10)
+            else:
+                estimated_pages = 1
+            return JSONResponse(content={"pages": estimated_pages})
+
+    except Exception as e:
+        return JSONResponse(content={"pages": 1})
+
+
 @app.post("/api/tailor-json")
 async def tailor_resume_json(
     resume_text: str = Form(...),
     job_description: str = Form(...),
+    max_pages: int = Form(1),
 ):
     try:
         if not ANTHROPIC_API_KEY:
@@ -335,7 +409,13 @@ async def tailor_resume_json(
                 "error": "ANTHROPIC_API_KEY not configured. Add it in Railway Variables."
             })
 
+        # Clamp max_pages to 1 or 2
+        max_pages = max(1, min(2, max_pages))
+
         resume_text = process_resume_text(resume_text)
+
+        # Pick the right prompt based on page count
+        prompt = SYSTEM_PROMPT if max_pages == 1 else SYSTEM_PROMPT_2PAGE
 
         user_message = f"""Here is the candidate's current resume:
 
@@ -349,18 +429,18 @@ Here is the target job description:
 {job_description}
 ---JOB DESCRIPTION END---
 
-Tailor this resume for the job. Output the JSON metadata block first, then the LaTeX body."""
+Tailor this resume for the job as a {max_pages}-page resume. Output the JSON metadata block first, then the LaTeX body."""
 
-        claude_response = await call_claude(SYSTEM_PROMPT, user_message)
+        claude_response = await call_claude(prompt, user_message)
         name, contact_line, latex_body = parse_claude_response(claude_response)
         latex_body = sanitize_latex(latex_body)
         full_latex = build_full_latex(name, contact_line, latex_body)
 
-        # Try to compile — auto-shrinks if over 1 page
+        # Try to compile — auto-shrinks if over max_pages
         pdf_base64_str = None
         compile_error = None
         try:
-            pdf_path = compile_latex_single_page(full_latex)
+            pdf_path = compile_latex_fit_pages(full_latex, max_pages)
             with open(pdf_path, "rb") as f:
                 pdf_base64_str = base64.b64encode(f.read()).decode("utf-8")
         except Exception as first_err:
@@ -382,7 +462,7 @@ Fix it so it compiles. Output ONLY the corrected LaTeX body starting from \\sect
                 fixed = re.sub(r"```.*?\n?", "", fixed).strip()
                 fixed = sanitize_latex(fixed)
                 full_latex = build_full_latex(name, contact_line, fixed)
-                pdf_path = compile_latex_single_page(full_latex)
+                pdf_path = compile_latex_fit_pages(full_latex, max_pages)
                 with open(pdf_path, "rb") as f:
                     pdf_base64_str = base64.b64encode(f.read()).decode("utf-8")
             except Exception as retry_err:
