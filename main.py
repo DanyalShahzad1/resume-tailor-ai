@@ -169,6 +169,29 @@ async def call_claude(system_prompt: str, user_message: str) -> str:
         return data["content"][0]["text"]
 
 
+def get_pdf_page_count(pdf_path: str) -> int:
+    """Get number of pages in a PDF."""
+    try:
+        result = subprocess.run(
+            ["pdfinfo", pdf_path],
+            capture_output=True, text=True, timeout=10,
+        )
+        for line in result.stdout.split("\n"):
+            if line.startswith("Pages:"):
+                return int(line.split(":")[1].strip())
+    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+        pass
+    # Fallback: try PyPDF2
+    try:
+        import PyPDF2
+        with open(pdf_path, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            return len(reader.pages)
+    except Exception:
+        pass
+    return 1
+
+
 def compile_latex(latex_code: str) -> str:
     tmpdir = tempfile.mkdtemp()
     tex_path = os.path.join(tmpdir, "resume.tex")
@@ -187,6 +210,47 @@ def compile_latex(latex_code: str) -> str:
             with open(log_path, "r") as f:
                 log_content = f.read()[-2000:]
         raise Exception(f"LaTeX compilation failed. Log:\n{log_content}")
+    return pdf_path
+
+
+def compile_latex_single_page(latex_code: str) -> str:
+    """Compile LaTeX and auto-shrink if it exceeds 1 page."""
+    # Try compiling as-is first
+    pdf_path = compile_latex(latex_code)
+    pages = get_pdf_page_count(pdf_path)
+
+    if pages <= 1:
+        return pdf_path
+
+    # If over 1 page, progressively shrink by adjusting spacing and font size
+    shrink_attempts = [
+        # Attempt 1: tighten item spacing
+        (r"\itemsep=0.6pt", r"\itemsep=0pt"),
+        # Attempt 2: tighten section spacing
+        (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}", r"\titlespacing*{\section}{0pt}{0.08cm}{0.04cm}"),
+        # Attempt 3: tighten role spacing
+        (r"\vspace{0.04cm}", r"\vspace{0.01cm}"),
+        # Attempt 4: tighten top/bottom margins
+        (r"top=0.65cm,bottom=0.65cm", r"top=0.5cm,bottom=0.5cm"),
+        # Attempt 5: reduce base role vspace
+        (r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.01cm}"),
+    ]
+
+    modified = latex_code
+    for old, new in shrink_attempts:
+        modified = modified.replace(old, new)
+        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+        pdf_path = compile_latex(modified)
+        pages = get_pdf_page_count(pdf_path)
+        if pages <= 1:
+            return pdf_path
+
+    # Last resort: scale the entire content down with \small
+    if pages > 1:
+        modified = modified.replace(r"\begin{document}", r"\begin{document}\small")
+        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+        pdf_path = compile_latex(modified)
+
     return pdf_path
 
 
@@ -289,11 +353,11 @@ Tailor this resume for the job. Output the JSON metadata block first, then the L
         latex_body = sanitize_latex(latex_body)
         full_latex = build_full_latex(name, contact_line, latex_body)
 
-        # Try to compile
+        # Try to compile — auto-shrinks if over 1 page
         pdf_base64_str = None
         compile_error = None
         try:
-            pdf_path = compile_latex(full_latex)
+            pdf_path = compile_latex_single_page(full_latex)
             with open(pdf_path, "rb") as f:
                 pdf_base64_str = base64.b64encode(f.read()).decode("utf-8")
         except Exception as first_err:
@@ -315,7 +379,7 @@ Fix it so it compiles. Output ONLY the corrected LaTeX body starting from \\sect
                 fixed = re.sub(r"```.*?\n?", "", fixed).strip()
                 fixed = sanitize_latex(fixed)
                 full_latex = build_full_latex(name, contact_line, fixed)
-                pdf_path = compile_latex(full_latex)
+                pdf_path = compile_latex_single_page(full_latex)
                 with open(pdf_path, "rb") as f:
                     pdf_base64_str = base64.b64encode(f.read()).decode("utf-8")
             except Exception as retry_err:
