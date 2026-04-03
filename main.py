@@ -11,10 +11,10 @@ from fastapi.responses import JSONResponse
 import httpx
 
 app = FastAPI()
-
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 
+# ── PDF text extraction ──────────────────────────────────────────────
 def extract_text_from_pdf_base64(b64_data: str) -> str:
     tmpdir = tempfile.mkdtemp()
     pdf_path = os.path.join(tmpdir, "input.pdf")
@@ -55,6 +55,7 @@ def process_resume_text(raw_text: str) -> str:
     return raw_text
 
 
+# ── LaTeX template ───────────────────────────────────────────────────
 LATEX_TEMPLATE = r"""
 \documentclass[10pt,letterpaper]{article}
 \usepackage[utf8]{inputenc}
@@ -69,8 +70,8 @@ LATEX_TEMPLATE = r"""
 \hypersetup{
   colorlinks=true,
   urlcolor=primaryColor,
-  pdftitle={<<NAME>> -- Resume},
-  pdfauthor={<<NAME>>}
+  pdftitle={<<n>> -- Resume},
+  pdfauthor={<<n>>}
 }
 \raggedright
 \sloppy
@@ -95,7 +96,7 @@ LATEX_TEMPLATE = r"""
   {\end{itemize}}
 \newcommand{\header}{
   \begin{center}
-    {\fontsize{21pt}{21pt}\selectfont \textbf{<<NAME>>}}\\[2pt]
+    {\fontsize{21pt}{21pt}\selectfont \textbf{<<n>>}}\\[2pt]
     <<CONTACT_LINE>>
   \end{center}
 }
@@ -105,23 +106,17 @@ LATEX_TEMPLATE = r"""
 \end{document}
 """
 
+
+# ── Prompts ──────────────────────────────────────────────────────────
 SYSTEM_PROMPT = r"""You are an elite resume tailoring expert. Your job is to aggressively rewrite a candidate's resume bullets to directly mirror a job description — while keeping the same underlying experiences and facts.
 
 WHAT YOU DO:
-- Read the job description and deeply understand what they're looking for: responsibilities, skills, tools, qualities.
-- REWRITE each bullet point so it reads like the candidate was doing exactly what the job description asks for. The bullet should sound like it was written specifically for this job.
-- Use the job description's EXACT phrases, terminology, and action verbs throughout. If the JD says "support month-end close processes", rewrite the relevant bullet to use those exact words.
-- Reframe accomplishments to emphasize the aspects most relevant to the target job. If the JD emphasizes "process improvement" and the candidate "optimized workflows", rewrite to highlight process improvement specifically.
+- Read the job description and deeply understand what they're looking for.
+- REWRITE each bullet point so it reads like the candidate was doing exactly what the job description asks for.
+- Use the job description's EXACT phrases, terminology, and action verbs throughout.
 - Front-load each bullet with the most job-relevant keyword or phrase.
+- Reframe accomplishments to emphasize aspects most relevant to the target job.
 - Rewrite Technical Skills categories and ordering to mirror the job description's language.
-- You are rewriting sentences, not just swapping synonyms. Each bullet should feel substantially different from the original while describing the same real experience.
-
-EXAMPLE OF WHAT "AGGRESSIVE TAILORING" MEANS:
-Original: "Built multi-scenario Excel forecasting models for a \$20M automotive business unit, integrating revenue, COGS, and SG\&A assumptions to support annual budget planning."
-Job description mentions: "financial planning & analysis", "budgeting and forecasting", "variance reporting", "stakeholder collaboration"
-Tailored: "Developed financial planning \& analysis models in Excel for a \$20M business unit, driving budgeting and forecasting cycles by integrating revenue, COGS, and SG\&A assumptions for cross-functional stakeholders."
-
-Notice: same facts, same metrics, but completely reframed using the job's language.
 
 WHAT YOU MUST KEEP THE SAME:
 - Same sections, same roles, same number of bullet points per role. Do NOT add or remove bullets.
@@ -145,17 +140,16 @@ CRITICAL OUTPUT FORMAT:
 
 LATEX COMMANDS TO USE:
 - \section{Title}
-- \role{Title | Company}{Dates}{Location}{Detail}  (first entry in section)
-- \nextrole{Title | Company}{Dates}{Location}{Detail}  (subsequent entries)
+- \role{Title | Company}{Dates}{Location}{}  (first entry in section)
+- \nextrole{Title | Company}{Dates}{Location}{}  (subsequent entries)
 - \begin{highlights} \item bullet text \end{highlights}
 - \textbf{Category:} text\\[2pt]  (for Technical Skills)
 
-ESCAPING RULES (CRITICAL - follow exactly):
-- Dollar amounts: \$20M  (backslash before $)
-- Ampersand in names: FP\&A, SG\&A  (backslash before &)
-- Percent sign: 15\%  (backslash before %)
+ESCAPING RULES (CRITICAL):
+- Dollar amounts: \$20M
+- Ampersand: FP\&A, SG\&A
+- Percent: 15\%
 - Hash: \#
-- Underscore in URLs is fine inside \href{}
 """
 
 SYSTEM_PROMPT_2PAGE = r"""You are an elite resume tailoring expert. Your job is to aggressively rewrite a candidate's resume bullets to directly mirror a job description — while condensing a long resume into a focused 2-page version.
@@ -166,20 +160,20 @@ WHAT YOU DO:
 - Read the job description and deeply understand what they're looking for.
 - REWRITE each bullet point so it reads like the candidate was doing exactly what the job description asks for.
 - Use the job description's EXACT phrases, terminology, and action verbs throughout.
-- Front-load each bullet with the most job-relevant keyword or phrase.
 - For very experienced candidates, focus on the last 10-15 years. Older roles get fewer bullets.
 - You MAY remove roles or sections that are completely irrelevant to the target job.
 - Keep roles in reverse chronological order within each section.
 
-CONTENT AMOUNT FOR 2 PAGES:
+CONTENT AMOUNT:
 - Most recent/relevant roles: 4-5 bullet points each.
 - Older or less relevant roles: 2-3 bullet points each.
 - Education: degrees, institutions, dates only — use \role format, no bullets.
 - Technical Skills: 2-3 category lines using \textbf{Category:} format.
-- Certifications: list them if present, using simple text lines.
+- Certifications: list them if present.
 
 PAGE FILLING (CRITICAL):
-- You MUST generate content that OVERFLOWS past 2 pages. Aim for roughly 2.2-2.4 pages of content. The system will automatically compress spacing to fit exactly 2 pages.
+- You MUST generate content that OVERFLOWS past 2 pages. Aim for roughly 2.2-2.4 pages of content.
+- The system will automatically compress spacing to fit exactly 2 pages.
 - Do NOT try to fit on 2 pages yourself. Write MORE than fits. The system handles the fitting.
 - Use 5-6 bullet points per major role, each 1.5-2 lines long.
 - Use 3-4 bullet points per minor role.
@@ -187,8 +181,8 @@ PAGE FILLING (CRITICAL):
 
 WHAT YOU MUST KEEP:
 - All facts, numbers, metrics, percentages, dates, and company names must be truthful.
-- Never invent or fabricate experience, achievements, or metrics.
-- The 4th parameter of \role and \nextrole (the right-aligned italic detail) must be SHORT — max 3 words, or leave it empty {}. Long text there gets cut off.
+- Never invent or fabricate experience.
+- The 4th parameter of \role and \nextrole must be SHORT (max 3 words) or empty {}.
 
 CRITICAL OUTPUT FORMAT:
 1. First output a JSON block with name and contact info:
@@ -198,22 +192,22 @@ CRITICAL OUTPUT FORMAT:
 
 2. Then output ONLY the LaTeX BODY content. Do NOT include \documentclass, \usepackage, \begin{document}, \end{document}, or \header.
 
-LATEX COMMANDS TO USE (same as 1-page resume):
+LATEX COMMANDS TO USE (same as 1-page):
 - \section{Title}
-- \role{Title | Company}{Dates}{Location}{}  (first entry in section)
-- \nextrole{Title | Company}{Dates}{Location}{}  (subsequent entries)
+- \role{Title | Company}{Dates}{Location}{}
+- \nextrole{Title | Company}{Dates}{Location}{}
 - \begin{highlights} \item bullet text \end{highlights}
-- \textbf{Category:} text\\[2pt]  (for Technical Skills)
+- \textbf{Category:} text\\[2pt]
 
-ESCAPING RULES (CRITICAL - follow exactly):
-- Dollar amounts: \$20M  (backslash before $)
-- Ampersand in names: FP\&A, SG\&A  (backslash before &)
-- Percent sign: 15\%  (backslash before %)
+ESCAPING RULES (CRITICAL):
+- Dollar amounts: \$20M
+- Ampersand: FP\&A, SG\&A
+- Percent: 15\%
 - Hash: \#
-- Underscore in URLs is fine inside \href{}
 """
 
 
+# ── Claude API ───────────────────────────────────────────────────────
 async def call_claude(system_prompt: str, user_message: str) -> str:
     async with httpx.AsyncClient(timeout=120.0) as client:
         response = await client.post(
@@ -225,7 +219,7 @@ async def call_claude(system_prompt: str, user_message: str) -> str:
             },
             json={
                 "model": "claude-sonnet-4-20250514",
-                "max_tokens": 4096,
+                "max_tokens": 8096,
                 "system": system_prompt,
                 "messages": [{"role": "user", "content": user_message}],
             },
@@ -236,19 +230,9 @@ async def call_claude(system_prompt: str, user_message: str) -> str:
         return data["content"][0]["text"]
 
 
+# ── PDF page count ───────────────────────────────────────────────────
 def get_pdf_page_count(pdf_path: str) -> int:
-    """Get number of pages in a PDF."""
-    try:
-        result = subprocess.run(
-            ["pdfinfo", pdf_path],
-            capture_output=True, text=True, timeout=10,
-        )
-        for line in result.stdout.split("\n"):
-            if line.startswith("Pages:"):
-                return int(line.split(":")[1].strip())
-    except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
-        pass
-    # Fallback: try PyPDF2
+    """Get page count using PyPDF2 (guaranteed installed)."""
     try:
         import PyPDF2
         with open(pdf_path, "rb") as f:
@@ -256,9 +240,18 @@ def get_pdf_page_count(pdf_path: str) -> int:
             return len(reader.pages)
     except Exception:
         pass
+    try:
+        result = subprocess.run(["pdfinfo", pdf_path],
+                                capture_output=True, text=True, timeout=10)
+        for line in result.stdout.split("\n"):
+            if line.startswith("Pages:"):
+                return int(line.split(":")[1].strip())
+    except Exception:
+        pass
     return 1
 
 
+# ── LaTeX compilation ────────────────────────────────────────────────
 def compile_latex(latex_code: str) -> str:
     tmpdir = tempfile.mkdtemp()
     tex_path = os.path.join(tmpdir, "resume.tex")
@@ -281,65 +274,71 @@ def compile_latex(latex_code: str) -> str:
 
 
 def compile_latex_fit_pages(latex_code: str, max_pages: int = 1) -> str:
-    """Compile LaTeX, auto-shrink if over max_pages, auto-expand if under max_pages."""
+    """Compile LaTeX and auto-adjust to fit exactly max_pages."""
     pdf_path = compile_latex(latex_code)
     pages = get_pdf_page_count(pdf_path)
 
     # === SHRINK if over max_pages ===
     if pages > max_pages:
-        shrink_attempts = [
-            (r"\itemsep=0.6pt", r"\itemsep=0.2pt"),
-            (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}", r"\titlespacing*{\section}{0pt}{0.09cm}{0.05cm}"),
-            (r"\vspace{0.04cm}", r"\vspace{0.02cm}"),
-            (r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.01cm}"),
-            (r"top=0.65cm,bottom=0.65cm", r"top=0.5cm,bottom=0.5cm"),
-            (r"left=0.9cm,right=0.9cm", r"left=0.75cm,right=0.75cm"),
-            (r"\itemsep=0.2pt", r"\itemsep=0pt"),
-            (r"\titlespacing*{\section}{0pt}{0.09cm}{0.05cm}", r"\titlespacing*{\section}{0pt}{0.06cm}{0.03cm}"),
-        ]
+        # Level 1: tighten all spacing
+        m = latex_code
+        m = m.replace(r"\itemsep=0.6pt", r"\itemsep=0pt")
+        m = m.replace(r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}",
+                       r"\titlespacing*{\section}{0pt}{0.08cm}{0.04cm}")
+        m = m.replace(r"\vspace{0.04cm}", r"\vspace{0.01cm}")
+        m = m.replace(r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.01cm}")
+        m = m.replace(r"topsep=0.03cm", r"topsep=0.01cm")
+        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+        pdf_path = compile_latex(m)
+        if get_pdf_page_count(pdf_path) <= max_pages:
+            return pdf_path
 
-        modified = latex_code
-        for old, new in shrink_attempts:
-            modified = modified.replace(old, new)
-            shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
-            pdf_path = compile_latex(modified)
-            pages = get_pdf_page_count(pdf_path)
-            if pages <= max_pages:
-                return pdf_path
+        # Level 2: tighten margins
+        m = m.replace(r"top=0.65cm,bottom=0.65cm", r"top=0.4cm,bottom=0.4cm")
+        m = m.replace(r"left=0.9cm,right=0.9cm", r"left=0.7cm,right=0.7cm")
+        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+        pdf_path = compile_latex(m)
+        if get_pdf_page_count(pdf_path) <= max_pages:
+            return pdf_path
 
-        # Last resort: scale down with \small
-        if pages > max_pages:
-            modified = modified.replace(r"\begin{document}", r"\begin{document}\small")
-            shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
-            pdf_path = compile_latex(modified)
+        # Level 3: \small font
+        m = m.replace(r"\begin{document}", r"\begin{document}\small")
+        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+        pdf_path = compile_latex(m)
+        if get_pdf_page_count(pdf_path) <= max_pages:
+            return pdf_path
+
+        # Level 4: \footnotesize font
+        m = m.replace(r"\begin{document}\small", r"\begin{document}\footnotesize")
+        shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
+        pdf_path = compile_latex(m)
         return pdf_path
 
-    # === EXPAND if under max_pages (content doesn't fill target) ===
+    # === EXPAND if under max_pages ===
     if pages < max_pages:
-        expand_attempts = [
-            (r"\itemsep=0.6pt", r"\itemsep=2pt"),
-            (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}", r"\titlespacing*{\section}{0pt}{0.22cm}{0.1cm}"),
-            (r"\vspace{0.04cm}", r"\vspace{0.1cm}"),
-            (r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.07cm}"),
+        expand_steps = [
+            (r"\itemsep=0.6pt", r"\itemsep=2.5pt"),
+            (r"\titlespacing*{\section}{0pt}{0.13cm}{0.07cm}",
+             r"\titlespacing*{\section}{0pt}{0.25cm}{0.12cm}"),
+            (r"\vspace{0.04cm}", r"\vspace{0.12cm}"),
+            (r"\end{tabular*}\vspace{0.03cm}", r"\end{tabular*}\vspace{0.08cm}"),
         ]
-
-        modified = latex_code
-        for old, new in expand_attempts:
-            test_modified = modified.replace(old, new)
-            test_path = compile_latex(test_modified)
-            test_pages = get_pdf_page_count(test_path)
-            if test_pages <= max_pages:
-                modified = test_modified
+        m = latex_code
+        for old, new in expand_steps:
+            test = m.replace(old, new)
+            tp = compile_latex(test)
+            if get_pdf_page_count(tp) <= max_pages:
+                m = test
                 shutil.rmtree(os.path.dirname(pdf_path), ignore_errors=True)
-                pdf_path = test_path
+                pdf_path = tp
             else:
-                shutil.rmtree(os.path.dirname(test_path), ignore_errors=True)
-
+                shutil.rmtree(os.path.dirname(tp), ignore_errors=True)
         return pdf_path
 
     return pdf_path
 
 
+# ── Response parsing & sanitization ──────────────────────────────────
 def parse_claude_response(claude_response: str):
     json_match = re.search(r"```json\s*(\{.*?\})\s*```", claude_response, re.DOTALL)
     if not json_match:
@@ -367,56 +366,39 @@ def parse_claude_response(claude_response: str):
 
 
 def sanitize_latex(body: str) -> str:
-    """Fix common LaTeX issues from AI-generated content."""
-    # Remove preamble lines Claude might accidentally include
     body = re.sub(r"\\begin\{document\}", "", body)
     body = re.sub(r"\\end\{document\}", "", body)
     body = re.sub(r"\\documentclass.*\n?", "", body)
     body = re.sub(r"\\usepackage.*\n?", "", body)
     body = re.sub(r"^\\header\s*$", "", body, flags=re.MULTILINE)
-
-    # Fix unescaped $ before digits (dollar amounts like $20M)
     body = re.sub(r'(?<!\\)\$(\d)', r'\\$\1', body)
-
-    # Fix unescaped % (but not already escaped)
     body = re.sub(r'(?<!\\)%', r'\\%', body)
-
-    # Fix unescaped & inside \item lines (company names like FP&A)
     lines = body.split("\n")
     fixed = []
     for line in lines:
         if line.strip().startswith("\\item"):
-            # Escape & that isn't already escaped
             line = re.sub(r'(?<!\\)&', r'\\&', line)
         fixed.append(line)
     body = "\n".join(fixed)
-
-    # Fix double escapes that might result
     body = body.replace("\\\\&", "\\&")
     body = body.replace("\\\\%", "\\%")
     body = re.sub(r'\\\\\$(\d)', r'\\$\1', body)
-
     return body
 
 
 def build_full_latex(name: str, contact_line: str, body: str) -> str:
-    full = LATEX_TEMPLATE.replace("<<NAME>>", name)
+    full = LATEX_TEMPLATE.replace("<<n>>", name)
     full = full.replace("<<CONTACT_LINE>>", contact_line)
     full = full.replace("<<BODY>>", body)
     return full
 
 
+# ── API Endpoints ────────────────────────────────────────────────────
 @app.post("/api/check-resume")
-async def check_resume(
-    resume_text: str = Form(...),
-):
-    """Check the uploaded resume and estimate its page count."""
+async def check_resume(resume_text: str = Form(...)):
     try:
-        is_pdf = resume_text.startswith("[PDF_BASE64]:")
-
-        if is_pdf:
+        if resume_text.startswith("[PDF_BASE64]:"):
             b64_data = resume_text[len("[PDF_BASE64]:"):]
-            # Get actual page count from PDF
             tmpdir = tempfile.mkdtemp()
             pdf_path = os.path.join(tmpdir, "check.pdf")
             with open(pdf_path, "wb") as f:
@@ -425,16 +407,10 @@ async def check_resume(
             shutil.rmtree(tmpdir, ignore_errors=True)
             return JSONResponse(content={"pages": pages})
         else:
-            # For text/tex files, estimate based on content length
-            # A typical 1-page resume in this template is ~2000-3500 chars
             char_count = len(resume_text.strip())
-            if char_count > 4000:
-                estimated_pages = min(int(char_count / 2800) + 1, 10)
-            else:
-                estimated_pages = 1
+            estimated_pages = max(1, min(int(char_count / 2800) + 1, 10)) if char_count > 4000 else 1
             return JSONResponse(content={"pages": estimated_pages})
-
-    except Exception as e:
+    except Exception:
         return JSONResponse(content={"pages": 1})
 
 
@@ -451,12 +427,8 @@ async def tailor_resume_json(
                 "error": "ANTHROPIC_API_KEY not configured. Add it in Railway Variables."
             })
 
-        # Clamp max_pages to 1 or 2
         max_pages = max(1, min(2, max_pages))
-
         resume_text = process_resume_text(resume_text)
-
-        # Pick the right prompt based on page count
         prompt = SYSTEM_PROMPT if max_pages == 1 else SYSTEM_PROMPT_2PAGE
 
         user_message = f"""Here is the candidate's current resume:
@@ -478,7 +450,6 @@ Tailor this resume for the job as a {max_pages}-page resume. Output the JSON met
         latex_body = sanitize_latex(latex_body)
         full_latex = build_full_latex(name, contact_line, latex_body)
 
-        # Try to compile — auto-shrinks if over max_pages
         pdf_base64_str = None
         compile_error = None
         try:
@@ -486,7 +457,6 @@ Tailor this resume for the job as a {max_pages}-page resume. Output the JSON met
             with open(pdf_path, "rb") as f:
                 pdf_base64_str = base64.b64encode(f.read()).decode("utf-8")
         except Exception as first_err:
-            # Auto-retry: ask Claude to fix the broken LaTeX
             try:
                 fix_msg = f"""This LaTeX body failed to compile:
 
@@ -507,7 +477,7 @@ Fix it so it compiles. Output ONLY the corrected LaTeX body starting from \\sect
                 pdf_path = compile_latex_fit_pages(full_latex, max_pages)
                 with open(pdf_path, "rb") as f:
                     pdf_base64_str = base64.b64encode(f.read()).decode("utf-8")
-            except Exception as retry_err:
+            except Exception:
                 compile_error = f"Compilation failed after auto-fix retry. Error: {str(first_err)[-500:]}"
 
         return JSONResponse(content={
@@ -518,15 +488,9 @@ Fix it so it compiles. Output ONLY the corrected LaTeX body starting from \\sect
         })
 
     except ValueError as e:
-        return JSONResponse(content={
-            "success": False, "pdf_base64": None, "latex": "",
-            "error": str(e)
-        })
+        return JSONResponse(content={"success": False, "pdf_base64": None, "latex": "", "error": str(e)})
     except Exception as e:
-        return JSONResponse(content={
-            "success": False, "pdf_base64": None, "latex": "",
-            "error": f"Server error: {str(e)}"
-        })
+        return JSONResponse(content={"success": False, "pdf_base64": None, "latex": "", "error": f"Server error: {str(e)}"})
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
